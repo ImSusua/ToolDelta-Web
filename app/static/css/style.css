@@ -2351,3 +2351,169 @@ a.btn:hover { transform: translateY(-1px); }
   .notify-modal { width: 94%; max-width: none; }
   .notify-list { max-height: 50vh; }
 }
+
+/* ═══ 高星项目 UX 优化合集（第二批：无障碍 + 发现性） ═══ */
+
+/* ─── Skip to content（参考 gov.uk / GitHub / Vercel 无障碍跳转链接） ───
+   视觉隐藏但键盘可达；Tab 聚焦时滑入视图。 */
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 12px;
+  z-index: 10001;
+  padding: 8px 14px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: top .15s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.skip-link:focus {
+  top: 12px;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* ─── CSS Tooltip（参考 GitHub Primer Tooltip / Linear tooltip）
+   纯 CSS 实现：hover/focus 显示，无延迟（原生 title 慢且丑）。
+   用法：data-tip="文字" 放在任意元素上。 */
+[data-tip] { position: relative; }
+/* 已定位元素（fixed/absolute）需保留原定位，避免被上一条 relative 覆盖
+   导致悬浮按钮 / 吸顶元素错位。下面用更高特异性恢复。 */
+.palette-trigger[data-tip] { position: fixed; }
+.skip-link[data-tip] { position: fixed; }
+.sidebar-toggle-btn[data-tip] { position: fixed; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px) scale(0.96);
+  background: var(--ink);
+  color: var(--canvas);
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9000;
+  transition: opacity .12s ease, transform .12s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+[data-tip]::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s ease;
+  z-index: 9000;
+}
+@media (hover: hover) {
+  [data-tip]:hover::after,
+  [data-tip]:hover::before {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+[data-tip]:focus-visible::after,
+[data-tip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+/* 顶部锚定元素（如吸顶菜单按钮）：tooltip 翻转到下方，避免被视口顶部裁剪 */
+[data-tip-pos="bottom"]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px) scale(0.96);
+}
+[data-tip-pos="bottom"]::before {
+  bottom: auto;
+  top: calc(100% + 3px);
+  border-top-color: transparent;
+  border-bottom-color: var(--ink);
+  transform: translateX(-50%) translateY(-4px);
+}
+@media (hover: hover) {
+  [data-tip-pos="bottom"]:hover::after,
+  [data-tip-pos="bottom"]:hover::before {
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+[data-tip-pos="bottom"]:focus-visible::after,
+[data-tip-pos="bottom"]:focus-visible::before {
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+/* 侧边栏底部按钮：tooltip 显示在上方（按钮靠近视口底部） */
+.sidebar-footer [data-tip]::after {
+  bottom: calc(100% + 8px);
+}
+/* 浅色主题：tooltip 用深色画布底 + 浅色文字保持可读 */
+[data-theme="light"] [data-tip]::after {
+  background: #1a1a1a;
+  color: #f5f5f5;
+}
+[data-theme="light"] [data-tip]::before {
+  border-top-color: #1a1a1a;
+}
+/* 尊重 reduced-motion：tooltip 瞬显无过渡 */
+@media (prefers-reduced-motion: reduce) {
+  [data-tip]::after, [data-tip]::before { transition: none; }
+}
+
+/* ─── 键盘快捷键速查 modal（参考 GitHub `?` 快捷键面板） ─── */
+.shortcuts-modal { max-width: 480px; }
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.shortcut-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  transition: background .12s;
+}
+.shortcut-row:hover { background: var(--surface-2); }
+.shortcut-desc {
+  font-size: 13px;
+  color: var(--ink);
+}
+.shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.shortcut-keys kbd {
+  display: inline-block;
+  min-width: 20px;
+  text-align: center;
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--ink-muted);
+  line-height: 1.2;
+}
+[data-theme="light"] .shortcut-keys kbd {
+  background: var(--surface-1);
+  border-color: var(--hairline-strong);
+}

@@ -101,7 +101,7 @@ function renderCommands() {
                 // JSON.stringify 已转义双引号，再用 _cEsc 处理单引号闭合风险
                 var keyAttr = _cEsc(JSON.stringify(key));
                 return '<div class="cmd-row">' +
-                    '<button class="fav-btn' + favCls + '" title="收藏此命令" onclick=\'toggleFav(' + keyAttr + ')\'>★</button>' +
+                    '<button class="fav-btn' + favCls + '" data-tip="收藏此命令" onclick=\'toggleFav(' + keyAttr + ')\'>★</button>' +
                     '<span class="triggers">' + c.triggers.map(_cEsc).join('、') + '</span>' +
                     '<span class="hint">' + _cEsc(c.hint || '') + '</span>' +
                     '<span class="usage">' + _cEsc(c.usage || '') + '</span>' +

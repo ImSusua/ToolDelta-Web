@@ -81,6 +81,12 @@ window.TD_PALETTE = (function () {
             keywords: '通知 历史 notify history bell',
             run: function () { if (typeof openNotifyPanel === 'function') openNotifyPanel(); }
         });
+        // 查看键盘快捷键
+        acts.push({
+            id: 'act_open_shortcuts', label: '查看键盘快捷键', group: '动作', ico: '⌨️', hint: '?',
+            keywords: '快捷键 keyboard shortcuts help 帮助',
+            run: function () { if (typeof _openModal === 'function') _openModal('shortcutsModal'); }
+        });
         // 刷新当前页
         acts.push({
             id: 'act_refresh', label: '刷新当前页', group: '动作', ico: '🔄', hint: '',

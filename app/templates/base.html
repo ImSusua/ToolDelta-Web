@@ -111,7 +111,7 @@
     </script>
     {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
     <script src="/static/js/wallpaper.js"></script>
-    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="菜单" aria-label="切换菜单" aria-expanded="false">☰</button>
+    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false">☰</button>
     <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()" role="button" tabindex="0" aria-label="关闭菜单"></div>
     <script>
       /* ── Android 侧边栏边缘滑动手势 ──
@@ -157,6 +157,7 @@
         });
       })();
     </script>
+    <a href="#mainContent" class="skip-link">跳到主要内容</a>
     <aside class="sidebar" id="sidebar">
         <div class="brand">
             <span class="logo">TD</span>
@@ -179,10 +180,10 @@
         </nav>
         <div class="sidebar-footer">
             <div class="footer-actions-row">
-              <button class="theme-toggle" onclick="toggleTheme()" title="切换主题（深色 / 浅色 / 跟随系统）" aria-label="切换主题">
+              <button class="theme-toggle" onclick="toggleTheme()" data-tip="切换主题（深色 / 浅色 / 系统）" aria-label="切换主题（深色 / 浅色 / 跟随系统）">
                 <span class="theme-icon" aria-hidden="true"></span><span class="theme-label">主题</span>
               </button>
-              <button class="notify-toggle" onclick="openNotifyPanel()" title="通知历史" aria-label="通知历史">
+              <button class="notify-toggle" onclick="openNotifyPanel()" data-tip="通知历史" aria-label="通知历史">
                 <span class="notify-ico" aria-hidden="true">🔔</span>
                 <span class="notify-badge" id="notifyBadge" style="display:none" aria-hidden="true">0</span>
               </button>
@@ -328,7 +329,26 @@
         </div>
     </div>
     <!-- 移动端悬浮触发按钮（仅小屏显示，CSS 控制） -->
-    <button class="palette-trigger" id="paletteTrigger" title="命令面板" aria-label="打开命令面板">⌘</button>
+    <button class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板">⌘</button>
+
+    <!-- 键盘快捷键帮助（参考 GitHub `?` 快捷键速查） -->
+    <div class="modal-overlay" id="shortcutsModal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+        <div class="modal modal-sm shortcuts-modal">
+            <h2 id="shortcutsTitle">键盘快捷键</h2>
+            <div class="shortcuts-list">
+                <div class="shortcut-row"><span class="shortcut-desc">打开命令面板</span><span class="shortcut-keys"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">聚焦页面搜索框</span><span class="shortcut-keys"><kbd>/</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">查看快捷键速查</span><span class="shortcut-keys"><kbd>?</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">关闭弹窗 / 抽屉</span><span class="shortcut-keys"><kbd>esc</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">切换主题</span><span class="shortcut-keys"><kbd>⇧</kbd> + <kbd>T</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">命令面板内移动</span><span class="shortcut-keys"><kbd>↑</kbd> <kbd>↓</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">执行选中命令</span><span class="shortcut-keys"><kbd>↵</kbd></span></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal('shortcutsModal')">明白了</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/js/socket.io.min.js"></script>
     <script src="/static/js/main.js"></script>

@@ -326,6 +326,8 @@ function _openModal(id) {
     m.classList.add('active');
     // 标记背景为 inert：阻止屏幕阅读器与 Tab 访问背景内容
     _setInertExcept(m);
+    // 恢复上次选中的标签页（参考 Linear 标签记忆）
+    try { _restoreTabState(m); } catch(_) {}
     var focusable = m.querySelectorAll('input:not([type=hidden]),select,textarea,button,a[href]');
     if (focusable.length) setTimeout(function() { focusable[0].focus(); }, 50);
 }
@@ -409,7 +411,60 @@ document.addEventListener('keydown', function(e) {
     if (search) { search.focus(); e.preventDefault(); }
 });
 
-// ─── Tab 切换（含 aria-selected） ───
+// ─── 全局快捷键：? 唤起快捷键速查 / ⇧+T 切换主题（参考 GitHub 快捷键） ───
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = (document.activeElement && document.activeElement.tagName) || '';
+    var typing = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+    // ? 唤起快捷键速查（不在输入态，且未已有弹窗打开时）
+    if (e.key === '?' && !typing) {
+        var anyOpen = document.querySelector('.modal-overlay.active');
+        // 已是快捷键弹窗则忽略（由 Esc 关闭）
+        if (anyOpen && anyOpen.id !== 'shortcutsModal') return;
+        e.preventDefault();
+        if (typeof _openModal === 'function') _openModal('shortcutsModal');
+        return;
+    }
+    // ⇧+T 切换主题（参考 GitHub g t 进入主题切换的衍生习惯）
+    if (e.shiftKey && (e.key === 'T' || e.key === 't') && !typing) {
+        e.preventDefault();
+        if (typeof toggleTheme === 'function') toggleTheme();
+    }
+});
+
+// ─── Tab 切换（含 aria-selected + 状态持久化，参考 Linear/Vercel 记住上次标签页） ───
+function _tabScopeKey(container) {
+    // 用最近的可标识容器（modal id / card id / 页面路径）作为存档键
+    if (container && container.id) return container.id;
+    var modal = container && container.closest && container.closest('.modal[id], .card[id]');
+    if (modal && modal.id) return modal.id;
+    return 'page_' + (location.pathname || 'root');
+}
+function _saveTabState(scope, tabId) {
+    try { localStorage.setItem('td_tab_' + scope, tabId); } catch(e) {}
+}
+function _restoreTabState(container) {
+    if (!container) return;
+    var tabs = container.querySelectorAll('.tab-btn[data-tab]');
+    if (tabs.length <= 1) return; // 单 tab 无需恢复
+    var scope = _tabScopeKey(container);
+    var saved = null;
+    try { saved = localStorage.getItem('td_tab_' + scope); } catch(e) {}
+    if (!saved) return;
+    // 用属性匹配而非 CSS.escape，避免旧浏览器兼容问题
+    var target = null;
+    tabs.forEach(function(b) {
+        if (b.getAttribute('data-tab') === saved) target = b;
+    });
+    if (!target || target.classList.contains('active')) return;
+    // 模拟一次点击行为：切换 active 与 aria-selected，并显示对应面板
+    container.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+    target.classList.add('active');
+    target.setAttribute('aria-selected', 'true');
+    container.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    var panel = document.getElementById(saved);
+    if (panel) panel.classList.add('active');
+}
 document.addEventListener('click', function(e) {
     var tabBtn = e.target.closest('.tab-btn');
     if (!tabBtn) return;
@@ -421,6 +476,8 @@ document.addEventListener('click', function(e) {
     parent.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
     var target = document.getElementById(tabId);
     if (target) target.classList.add('active');
+    // 持久化当前标签（参考 Linear 标签记忆）
+    _saveTabState(_tabScopeKey(parent), tabId);
 });
 
 // ─── 通用：按钮禁用防双击 + 自动恢复（参考 calmops button loading state） ───

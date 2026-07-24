@@ -120,7 +120,7 @@
         <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">Web 终端登录所需的 fbtoken，可在终端外修改</p>
         <div style="display:flex;gap:8px">
             <input type="text" id="fbtokenInput" placeholder="输入 fbtoken..." style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
-            <button class="btn btn-outline btn-sm" onclick="tdCopy(document.getElementById('fbtokenInput').value, '已复制 fbtoken')" title="复制当前 token" aria-label="复制 fbtoken">复制</button>
+            <button class="btn btn-outline btn-sm" onclick="tdCopy(document.getElementById('fbtokenInput').value, '已复制 fbtoken')" data-tip="复制当前 token" aria-label="复制 fbtoken">复制</button>
             <button class="btn btn-primary btn-sm" onclick="saveFbtoken()">保存</button>
         </div>
         <div id="fbtokenError" style="color:#f87171;font-size:12px;margin-top:6px;display:none"></div>
