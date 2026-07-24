@@ -717,6 +717,8 @@ th[role="button"]:focus-visible {
   color: var(--ink-subtle);
 }
 .empty-state .icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
+/* loading 态：spinner 居中独占一行（参考 Vercel skeleton→spinner） */
+.empty-state .spinner { display: block; margin: 0 auto 12px; }
 
 /* 离线横幅：参考 koder.ai offline state —— 顶部持续提示条，恢复后滑出消失 */
 .offline-banner {
@@ -2042,3 +2044,310 @@ label.form-label {
   vertical-align: middle; margin-right: 6px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══ 高星项目 UX 优化合集（参考 Linear / Raycast / shadcn/ui / GitHub Primer / Vercel） ═══ */
+
+/* ─── 字段级内联校验（参考 shadcn/ui Form / Linear） ─── */
+input[aria-invalid="true"],
+textarea[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(229, 72, 77, 0.18);
+}
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 5px;
+  line-height: 1.4;
+  animation: fieldErrorIn .18s ease-out;
+}
+@keyframes fieldErrorIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── 通知中心：铃铛按钮 + 历史 modal ─── */
+.notify-toggle {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  border-radius: var(--r-md);
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: border-color .15s, color .15s;
+}
+.notify-toggle:hover {
+  border-color: var(--primary);
+  color: var(--ink);
+}
+.notify-toggle .notify-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--canvas);
+  animation: badgePop .25s ease-out;
+}
+@keyframes badgePop {
+  from { transform: scale(0); }
+  60%  { transform: scale(1.15); }
+  to   { transform: scale(1); }
+}
+.notify-modal { max-width: 460px; }
+.notify-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0 -4px 8px;
+  padding: 0 4px;
+  scrollbar-width: thin;
+}
+.notify-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  transition: background .12s;
+}
+.notify-item:hover { background: var(--surface-2); }
+.notify-item .notify-ico { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
+.notify-item .notify-body { flex: 1; min-width: 0; }
+.notify-item .notify-msg {
+  font-size: 13px; color: var(--ink);
+  line-height: 1.45;
+  word-break: break-word;
+}
+.notify-item .notify-ts {
+  font-size: 11px; color: var(--ink-tertiary);
+  margin-top: 3px;
+}
+.notify-error { background: rgba(229, 72, 77, 0.06); }
+.notify-error .notify-ico { color: var(--danger); }
+.notify-warning { background: rgba(245, 166, 35, 0.06); }
+.notify-warning .notify-ico { color: var(--warning); }
+.notify-success .notify-ico { color: var(--success); }
+.notify-item .notify-action {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-muted);
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .12s, color .12s;
+}
+.notify-item .notify-action:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+/* ─── 命令面板 Cmd+K（参考 Linear / Raycast / Vercel cmdk） ─── */
+.palette-box {
+  width: 92%;
+  max-width: 560px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  margin-top: 12vh;
+  align-self: flex-start;
+  animation: paletteIn .15s ease-out;
+}
+@keyframes paletteIn {
+  from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.palette-input-wrap {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.palette-input-wrap::before {
+  content: '⌘';
+  color: var(--ink-subtle);
+  font-size: 16px;
+  font-weight: 600;
+}
+.palette-input {
+  flex: 1;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 15px;
+  color: var(--ink);
+  outline: none !important;
+}
+.palette-input::placeholder { color: var(--ink-tertiary); }
+.palette-list {
+  list-style: none;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 6px;
+  margin: 0;
+  scrollbar-width: thin;
+}
+.palette-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 8px 10px 4px;
+}
+.palette-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 13px;
+  transition: background .1s, color .1s;
+}
+.palette-item[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.palette-item .palette-ico {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.palette-item .palette-label { flex: 1; min-width: 0; }
+.palette-item .palette-hint {
+  font-size: 11px;
+  color: var(--ink-tertiary);
+  margin-left: auto;
+  padding-left: 8px;
+}
+.palette-item mark {
+  background: rgba(94, 106, 210, 0.25);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.palette-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--ink-tertiary);
+  font-size: 13px;
+}
+.palette-foot {
+  display: flex; gap: 14px; align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--ink-tertiary);
+}
+.palette-foot kbd {
+  display: inline-block;
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xs);
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--ink-muted);
+  margin-right: 3px;
+}
+.palette-trigger {
+  position: fixed;
+  right: 16px; bottom: 16px;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  box-shadow: 0 6px 20px rgba(94, 106, 210, 0.4);
+  display: none;
+  z-index: 90;
+  align-items: center; justify-content: center;
+  transition: transform .15s, box-shadow .15s;
+}
+.palette-trigger:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(94, 106, 210, 0.5);
+}
+.palette-trigger:active { transform: translateY(0); }
+@media (max-width: 900px) {
+  .palette-trigger { display: flex; }
+  body.kbd-open .palette-trigger { display: none; }
+}
+
+/* ─── 复制按钮（带成功反馈，参考 GitHub 一键复制） ─── */
+.copy-btn {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--ink-subtle);
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .12s;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.copy-btn:hover {
+  color: var(--ink);
+  border-color: var(--hairline-strong);
+}
+.copy-btn.copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ─── 表格 sticky 表头（参考 shadcn DataTable / TanStack Table） ─── */
+.table-wrap {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  scrollbar-width: thin;
+}
+.table-wrap table { border-radius: 0; }
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  z-index: 1;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+[data-theme="light"] .table-wrap thead th { background: var(--surface-3); }
+
+/* ─── 视图状态持久化：恢复筛选时高亮反馈 ─── */
+.filter-restored {
+  animation: filterRestored .8s ease-out;
+}
+@keyframes filterRestored {
+  0%   { box-shadow: 0 0 0 2px rgba(94, 106, 210, 0.3); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ─── 链接 hover 反馈（参考 GitHub Primer hovercard 微交互） ─── */
+a.btn:hover { transform: translateY(-1px); }
+@media (hover: none) { a.btn:hover { transform: none; } }
+
+/* ─── 移动端：命令面板 / 通知 modal 适配 ─── */
+@media (max-width: 768px) {
+  .palette-box { width: 94%; margin-top: 8vh; }
+  .palette-foot { font-size: 10px; gap: 10px; }
+  .notify-modal { width: 94%; max-width: none; }
+  .notify-list { max-height: 50vh; }
+}

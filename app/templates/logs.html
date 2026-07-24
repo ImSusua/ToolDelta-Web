@@ -49,4 +49,13 @@
 
 {% block scripts %}
 <script src="/static/js/logs.js"></script>
+<script>
+  // 视图状态持久化：刷新后保留筛选条件（参考 Linear 表格筛选记忆）
+  if (window.tdPref) {
+    ['logLevel','logSource','logFilter','logDate'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) tdPref.bind('logs', el, id);
+    });
+  }
+</script>
 {% endblock %}

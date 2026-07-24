@@ -178,9 +178,15 @@
             <a href="/settings" class="nav-separator {% if active_page == 'settings' %}active{% endif %}" {% if active_page == 'settings' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎛️</span>面板设置</a>
         </nav>
         <div class="sidebar-footer">
-            <button class="theme-toggle" onclick="toggleTheme()" title="切换主题（深色 / 浅色 / 跟随系统）" aria-label="切换主题">
-              <span class="theme-icon" aria-hidden="true"></span><span class="theme-label">主题</span>
-            </button>
+            <div class="footer-actions-row">
+              <button class="theme-toggle" onclick="toggleTheme()" title="切换主题（深色 / 浅色 / 跟随系统）" aria-label="切换主题">
+                <span class="theme-icon" aria-hidden="true"></span><span class="theme-label">主题</span>
+              </button>
+              <button class="notify-toggle" onclick="openNotifyPanel()" title="通知历史" aria-label="通知历史">
+                <span class="notify-ico" aria-hidden="true">🔔</span>
+                <span class="notify-badge" id="notifyBadge" style="display:none" aria-hidden="true">0</span>
+              </button>
+            </div>
             <script>
               // 初始化切换器 data-current（DOMContentLoaded 前可能已渲染，用脚本立即补齐）
               (function(){
@@ -288,8 +294,45 @@
         </div>
     </div>
 
+    <!-- 通知历史面板（参考 Linear / GitHub 通知下拉） -->
+    <div class="modal-overlay" id="notifyModal" role="dialog" aria-modal="true" aria-labelledby="notifyTitle">
+        <div class="modal modal-sm notify-modal">
+            <h2 id="notifyTitle">通知历史</h2>
+            <div id="notifyList" class="notify-list" role="log" aria-live="polite" aria-label="通知列表"></div>
+            <div class="modal-actions">
+                <button class="btn btn-outline btn-sm" id="notifyClearBtn" onclick="_clearNotifyHistory()">清空</button>
+                <button class="btn btn-outline" onclick="closeModal('notifyModal')">关闭</button>
+            </div>
+        </div>
+    </div>
+    <script>
+      // 清空通知历史（仅前端归档，不影响已发出的 toast）
+      function _clearNotifyHistory() {
+        try { _TOAST_HISTORY.length = 0; _NOTIFY_UNREAD = 0; _updateNotifyBadge(); _renderNotifyList(); } catch(e) {}
+      }
+    </script>
+
+    <!-- 命令面板 Cmd+K（参考 Linear / Raycast / Vercel cmdk） -->
+    <div class="modal-overlay" id="cmdPalette" role="dialog" aria-modal="true" aria-label="命令面板">
+        <div class="palette-box">
+            <div class="palette-input-wrap">
+                <input type="text" id="paletteInput" class="palette-input" placeholder="输入命令或搜索…" autocomplete="off" spellcheck="false" aria-label="搜索命令">
+            </div>
+            <ul id="paletteList" class="palette-list" role="listbox"></ul>
+            <div class="palette-foot">
+                <span><kbd>↑↓</kbd>选择</span>
+                <span><kbd>↵</kbd>执行</span>
+                <span><kbd>esc</kbd>关闭</span>
+                <span style="margin-left:auto"><kbd>⌘K</kbd>唤起</span>
+            </div>
+        </div>
+    </div>
+    <!-- 移动端悬浮触发按钮（仅小屏显示，CSS 控制） -->
+    <button class="palette-trigger" id="paletteTrigger" title="命令面板" aria-label="打开命令面板">⌘</button>
+
     <script src="/static/js/socket.io.min.js"></script>
     <script src="/static/js/main.js"></script>
+    <script src="/static/js/palette.js"></script>
     <script src="/static/js/deps.js"></script>
     {% block scripts %}{% endblock %}
 </body>

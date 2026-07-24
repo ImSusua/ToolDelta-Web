@@ -116,7 +116,8 @@ function _esc(s) {
 function loadPlugins() {
     var c = document.getElementById('pluginList');
     // 骨架屏占位（参考 Primer skeleton loaders）：避免空白闪烁，感知更快
-    if (c) c.innerHTML = '<div class="skeleton-list" aria-busy="true" aria-live="polite">' +
+    if (c && window.renderState) renderState(c, 'skeleton', { count: 3 });
+    else if (c) c.innerHTML = '<div class="skeleton-list" aria-busy="true" aria-live="polite">' +
         '<div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>' +
         '</div>';
     fetch('/api/plugins')
@@ -124,7 +125,7 @@ function loadPlugins() {
         .then(function(d) { allPlugins = Array.isArray(d) ? d : []; renderPlugins(); })
         .catch(function() {
             allPlugins = [];
-            // 参考 GitHub Primer Blankslate error：图标+说明+重试按钮
+            // 统一错误状态：图标+说明+重试按钮（参考 Primer Blankslate error）
             if (c && window.renderErrorState) renderErrorState(c, '加载插件失败', loadPlugins);
             else if (c) c.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">⚠️</div>加载插件失败</div>';
         });
@@ -177,7 +178,19 @@ function renderPlugins() {
     var container = document.getElementById('pluginList');
     if (!container) return;
     if (list.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">🧩</div>暂无插件</div>';
+        // 统一空态组件（参考 Vercel/Primer）：区分"搜索无结果"与"完全无数据"
+        if (window.renderState) {
+            var hasFilter = q || (filter && filter !== 'all');
+            renderState(container, 'empty', {
+                icon: '🧩',
+                title: hasFilter ? '未找到匹配的插件' : '暂无插件',
+                hint: hasFilter ? '尝试更换关键词或筛选条件' : '点击「添加插件」安装第一个',
+                cta: hasFilter ? null : '添加插件',
+                ctaFn: showAddPluginModal
+            });
+        } else {
+            container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">🧩</div>暂无插件</div>';
+        }
         return;
     }
     container.innerHTML = list.map(function(p) {
@@ -196,26 +209,67 @@ function renderPlugins() {
 }
 
 function togglePlugin(name, enable) {
+    // 乐观更新（参考 Linear / Vercel 即时反馈）：先翻转 UI，失败时回滚
+    var p = allPlugins.find(function(x) { return x.name === name; });
+    if (!p) return;
+    var prev = p.is_enabled;
+    if (prev === enable) return; // 已是目标状态，无需请求
+    p.is_enabled = enable;
+    renderPlugins();
     fetch('/api/plugins/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:name, enable:enable}) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (d && d.success) { showToast(enable ? '已启用' : '已禁用', 'success'); loadPlugins(); }
-            else showToast('操作失败: ' + (d && d.error || '未知错误'), 'error');
+            if (d && d.success) {
+                showToast(enable ? '已启用' : '已禁用', 'success');
+            } else {
+                // 回滚
+                p.is_enabled = prev; renderPlugins();
+                showToast('操作失败: ' + (d && d.error || '未知错误'), 'error');
+            }
         })
-        .catch(function() { showToast('网络请求失败', 'error'); });
+        .catch(function() {
+            p.is_enabled = prev; renderPlugins();
+            showToast('网络请求失败，已回滚', 'error');
+        });
 }
 
 function deletePlugin(name) {
-    showConfirm('确定删除插件 ' + name + '？此操作不可撤销。', function(ok) {
-        if (!ok) return;
+    // 软删除 + 撤销 Toast（参考 Gmail 撤销删除 / Linear 取消删除）
+    // 保留快照，前端立即移除；用户可在 6s 内撤销；超时后真正提交删除请求
+    var snapshot = allPlugins.slice();
+    var idx = allPlugins.findIndex(function(x) { return x.name === name; });
+    if (idx < 0) return;
+    allPlugins.splice(idx, 1);
+    renderPlugins();
+    var undone = false;
+    var toastOpts = {
+        action: { label: '撤销', fn: function() {
+            undone = true;
+            allPlugins = snapshot; renderPlugins();
+            showToast('已撤销删除', 'info');
+        }}
+    };
+    showToast('已删除「' + name + '」', 'info', toastOpts);
+    // 6 秒后真正提交删除（撤销窗口关闭后）
+    setTimeout(function() {
+        if (undone) return;
         fetch('/api/plugins/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:name}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d && d.success) { showToast('已删除', 'success'); loadPlugins(); }
-                else showToast('删除失败: ' + (d && d.error || '未知错误'), 'error');
+                if (d && d.success) { /* 已在前端移除，无需再 loadPlugins */ }
+                else {
+                    // 服务器拒绝：把插件加回（用 splice 保持原位置）
+                    allPlugins.splice(idx, 0, snapshot[idx]);
+                    renderPlugins();
+                    showToast('删除失败: ' + (d && d.error || '未知错误'), 'error');
+                }
             })
-            .catch(function() { showToast('网络请求失败', 'error'); });
-    });
+            .catch(function() {
+                allPlugins.splice(idx, 0, snapshot[idx]);
+                renderPlugins();
+                showToast('删除请求失败，已恢复', 'error');
+            });
+    }, 6000);
 }
 
 function showAddPluginModal() {
@@ -510,5 +564,25 @@ function refreshConfigFile() {
 }
 
 loadPlugins();
+// 视图状态持久化：刷新后保留搜索/筛选条件（参考 Linear 表格筛选记忆）
+if (window.tdPref) {
+    tdPref.bind('plugins', document.getElementById('pluginSearch'), 'q');
+    tdPref.bind('plugins', document.getElementById('pluginFilter'), 'filter');
+    // bind 已恢复值后，触发一次 render 让筛选立即生效
+    renderPlugins();
+}
+// 命令面板注册：插件页专属操作（参考 Linear page-scoped actions）
+if (window.TD_PALETTE) {
+    TD_PALETTE.register({
+        id: 'pg_plugins_add', label: '添加插件', group: '本页操作', ico: '➕', hint: 'plugins',
+        keywords: '添加 安装 add plugin upload install',
+        run: function () { if (typeof showAddPluginModal === 'function') showAddPluginModal(); }
+    });
+    TD_PALETTE.register({
+        id: 'pg_plugins_refresh', label: '刷新插件列表', group: '本页操作', ico: '🔄', hint: 'plugins',
+        keywords: '刷新 refresh reload plugins',
+        run: function () { if (typeof loadPlugins === 'function') loadPlugins(); }
+    });
+}
 </script>
 {% endblock %}

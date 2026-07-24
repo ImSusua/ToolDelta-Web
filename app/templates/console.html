@@ -120,4 +120,24 @@
 
 {% block scripts %}
 <script src="/static/js/console.js"></script>
+<script>
+  // 命令面板注册：控制台专属操作（参考 Linear page-scoped actions）
+  if (window.TD_PALETTE) {
+    TD_PALETTE.register({
+        id: 'pg_console_clear', label: '清空控制台', group: '本页操作', ico: '🧹', hint: 'console',
+        keywords: '清空 clear console 屏',
+        run: function () { if (typeof clearConsole === 'function') clearConsole(); }
+    });
+    TD_PALETTE.register({
+        id: 'pg_console_scroll', label: '滚动到最新', group: '本页操作', ico: '↓', hint: 'console',
+        keywords: '滚动 最新 scroll bottom down',
+        run: function () { if (typeof scrollToBottom === 'function') scrollToBottom(); }
+    });
+    TD_PALETTE.register({
+        id: 'pg_console_copy', label: '复制全部输出', group: '本页操作', ico: '📋', hint: 'console',
+        keywords: '复制 copy all console',
+        run: function () { if (typeof copyAllConsole === 'function') copyAllConsole(); }
+    });
+  }
+</script>
 {% endblock %}

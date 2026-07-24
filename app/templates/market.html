@@ -142,5 +142,11 @@ function quickInstall(pid) {
 }
 
 loadMarket();
+// 视图状态持久化：刷新后保留搜索方式（参考 Linear 筛选记忆）
+if (window.tdPref) {
+    tdPref.bind('market', document.getElementById('marketSearch'), 'q');
+    tdPref.bind('market', document.getElementById('marketSearchBy'), 'by');
+    renderMarket();
+}
 </script>
 {% endblock %}

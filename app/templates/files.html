@@ -117,8 +117,9 @@
 var CURRENT_PATH = '';
 var FILES_ROOT = '';
 var SELECTED = [];
-var SORT_BY = 'name';
-var SORT_DIR = 'asc';
+// 从 localStorage 恢复排序偏好（参考 Linear 表格列排序记忆）
+var SORT_BY = (window.tdPref && tdPref.get('files', 'sort_by', 'name')) || 'name';
+var SORT_DIR = (window.tdPref && tdPref.get('files', 'sort_dir', 'asc')) || 'asc';
 var IS_SEARCH = false;
 
 function navigateTo(path) {
@@ -180,8 +181,11 @@ function sortEntries(entries) {
 function setSort(field) {
     if (SORT_BY === field) SORT_DIR = SORT_DIR === 'asc' ? 'desc' : 'asc';
     else { SORT_BY = field; SORT_DIR = 'asc'; }
+    // 持久化排序偏好（参考 Linear 表格排序记忆）
+    if (window.tdPref) { tdPref.set('files', 'sort_by', SORT_BY); tdPref.set('files', 'sort_dir', SORT_DIR); }
     document.querySelectorAll('th span[id^="sort"]').forEach(function(s){ s.textContent = ''; });
-    document.getElementById('sort' + field.charAt(0).toUpperCase() + field.slice(1)).textContent = SORT_DIR === 'asc' ? '▲' : '▼';
+    var sortIcon = document.getElementById('sort' + field.charAt(0).toUpperCase() + field.slice(1));
+    if (sortIcon) sortIcon.textContent = SORT_DIR === 'asc' ? '▲' : '▼';
     loadFiles();
 }
 
@@ -525,7 +529,21 @@ function closeEditor() {
     EDITOR_PATH = '';
 }
 
-document.addEventListener('DOMContentLoaded', function(){ loadFiles(); });
+document.addEventListener('DOMContentLoaded', function(){
+    // 恢复上次搜索关键字（参考 Linear 筛选记忆）
+    if (window.tdPref) {
+        var searchEl = document.getElementById('searchInput');
+        if (searchEl) {
+            var saved = tdPref.get('files', 'search', '');
+            if (saved) { searchEl.value = saved; /* 不自动触发搜索，避免误激活 */ }
+            searchEl.addEventListener('input', function(){ tdPref.set('files', 'search', searchEl.value); });
+        }
+    }
+    // 恢复排序方向指示符
+    var sortIcon = document.getElementById('sort' + SORT_BY.charAt(0).toUpperCase() + SORT_BY.slice(1));
+    if (sortIcon) sortIcon.textContent = SORT_DIR === 'asc' ? '▲' : '▼';
+    loadFiles();
+});
 
 // 拖拽上传：在文件列表区域拖入文件即上传到当前目录
 (function() {

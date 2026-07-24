@@ -31,6 +31,8 @@ function showToast(msg, type, opts) {
         removeToast(t);
     });
     container.appendChild(t);
+    // 归档到通知中心历史（toast 即时显示的同时持久化记录）
+    try { if (window._archiveToast) _archiveToast(msg, type, opts); } catch(_) {}
     // 绑定 action 按钮
     if (opts.action && opts.action.fn) {
         var actionBtn = t.querySelector('.toast-action');
@@ -114,35 +116,103 @@ window.tdLock = function(btn, fn) {
     return p;
 };
 
-// ─── 通用：列表错误状态渲染（参考 GitHub Primer Blankslate error 变体 + figr.design Full-Page Error） ──
-// 三要素：图标 + 说明 + 重试按钮。所有列表 catch 统一调用，避免散落实现不一致。
-// 用法：renderErrorState(containerEl, '加载插件失败', loadPlugins)
-window.renderErrorState = function(container, message, retryFn, opts) {
+// ─── 通用：状态组件 renderState（参考 Vercel/Primer 四态：loading → content → error → empty） ──
+// 统一所有列表/卡片的状态展示，避免散落实现不一致。
+// 用法：
+//   renderState(el, 'loading', { title: '加载中…' });
+//   renderState(el, 'error',   { message: '加载插件失败', retry: loadPlugins, icon: '⚠️' });
+//   renderState(el, 'empty',   { icon: '🧩', title: '暂无插件', hint: '点击添加', cta: '添加插件', ctaFn: showAddPluginModal });
+//   renderState(el, 'skeleton',{ count: 3 });
+// 兼容旧调用 renderErrorState(container, message, retryFn, opts)
+window.renderState = function(container, state, opts) {
     if (!container) return;
     opts = opts || {};
-    var icon = opts.icon || '⚠️';
-    var retryText = opts.retryText || '重试';
-    var hint = opts.hint || '请检查网络后重试';
     var esc = window._escHtml || function(s){ return String(s==null?'':s); };
-    var html = '<div class="empty-state empty-state-error" role="alert">' +
-        '<div class="icon" aria-hidden="true">' + esc(icon) + '</div>' +
-        '<div class="empty-title">' + esc(message) + '</div>' +
-        '<p class="empty-hint">' + esc(hint) + '</p>';
-    if (typeof retryFn === 'function') {
-        var btnId = 'td_retry_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-        html += '<button class="btn btn-outline btn-sm" id="' + btnId + '">' + esc(retryText) + '</button>';
-        // 延迟绑定 onclick，避免闭包引用过期 container
-        setTimeout(function() {
-            var b = document.getElementById(btnId);
-            if (b) b.addEventListener('click', function() {
-                // 重试时显示 loading 占位
-                container.innerHTML = '<div class="empty-state" aria-busy="true" aria-live="polite"><span class="spinner"></span> 加载中...</div>';
-                try { retryFn(); } catch(e) { /* 让 retryFn 内部 catch 处理 */ }
-            });
-        }, 0);
+    var html = '';
+    if (state === 'loading') {
+        html = '<div class="empty-state" aria-busy="true" aria-live="polite">' +
+            '<span class="spinner" role="status" aria-label="加载中"></span>' +
+            '<div class="empty-title" style="margin-top:12px">' + esc(opts.title || '加载中…') + '</div></div>';
+        container.innerHTML = html;
+        return;
     }
-    html += '</div>';
-    container.innerHTML = html;
+    if (state === 'skeleton') {
+        var n = opts.count || 3;
+        html = '<div class="skeleton-list" aria-busy="true" aria-live="polite">';
+        for (var i = 0; i < n; i++) html += '<div class="skeleton-card"></div>';
+        html += '</div>';
+        container.innerHTML = html;
+        return;
+    }
+    if (state === 'error') {
+        html = '<div class="empty-state empty-state-error" role="alert">' +
+            '<div class="icon" aria-hidden="true">' + esc(opts.icon || '⚠️') + '</div>' +
+            '<div class="empty-title">' + esc(opts.message || opts.title || '加载失败') + '</div>' +
+            '<p class="empty-hint">' + esc(opts.hint || '请检查网络后重试') + '</p>';
+        if (typeof opts.retry === 'function') {
+            var btnId = 'td_retry_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+            html += '<button class="btn btn-outline btn-sm" id="' + btnId + '">' + esc(opts.retryText || '重试') + '</button>';
+            container.innerHTML = html + '</div>';
+            setTimeout(function() {
+                var b = document.getElementById(btnId);
+                if (b) b.addEventListener('click', function() {
+                    container.innerHTML = '<div class="empty-state" aria-busy="true" aria-live="polite"><span class="spinner" role="status" aria-label="加载中"></span><div class="empty-title" style="margin-top:12px">加载中…</div></div>';
+                    try { opts.retry(); } catch(e) {}
+                });
+            }, 0);
+            return;
+        }
+        container.innerHTML = html + '</div>';
+        return;
+    }
+    if (state === 'empty') {
+        html = '<div class="empty-state">' +
+            '<div class="icon" aria-hidden="true">' + esc(opts.icon || '📭') + '</div>' +
+            '<div class="empty-title">' + esc(opts.title || '暂无数据') + '</div>';
+        if (opts.hint) html += '<p class="empty-hint">' + esc(opts.hint) + '</p>';
+        if (opts.cta && typeof opts.ctaFn === 'function') {
+            var id = 'td_cta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+            html += '<button class="btn btn-outline btn-sm" id="' + id + '">' + esc(opts.cta) + '</button>';
+            container.innerHTML = html + '</div>';
+            setTimeout(function() {
+                var b = document.getElementById(id);
+                if (b) b.addEventListener('click', opts.ctaFn);
+            }, 0);
+            return;
+        }
+        container.innerHTML = html + '</div>';
+        return;
+    }
+};
+
+// 兼容旧 API：renderErrorState(container, message, retryFn, opts)
+window.renderErrorState = function(container, message, retryFn, opts) {
+    opts = opts || {};
+    opts.message = message;
+    opts.retry = retryFn;
+    window.renderState(container, 'error', opts);
+};
+
+// ─── 通用：字段级内联校验（参考 shadcn/ui Form / Linear 字段提示） ───
+// 用法：setFieldError(inputEl, '两次密码不一致') / setFieldError(inputEl, '')  // 清除
+// 自动给 .form-group 追加 .field-error 提示文字，input 加 aria-invalid 红框。
+window.setFieldError = function(input, msg) {
+    if (!input) return;
+    var group = input.closest('.form-group') || input.parentElement;
+    input.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    if (!group) { if (!msg) return; }
+    var err = group ? group.querySelector('.field-error') : null;
+    if (!msg) { if (err) err.remove(); input.removeAttribute('aria-invalid'); return; }
+    if (!err) {
+        err = document.createElement('div');
+        err.className = 'field-error'; err.setAttribute('role', 'alert');
+        if (group) group.appendChild(err);
+        var id = 'fe_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        err.id = id;
+        var old = input.getAttribute('aria-describedby') || '';
+        input.setAttribute('aria-describedby', (old + ' ' + id).trim());
+    }
+    err.textContent = msg;
 };
 
 
@@ -372,6 +442,67 @@ function withGuard(btn, fn) {
     return p;
 }
 
+// ─── 通用：视图状态持久化（参考 Linear 表格筛选状态保留 / Notion 列配置记忆） ───
+// 各页面调用 tdPref.bind(pageKey, inputEl, stateKey) 即可双向持久化 input/select 值，
+// 刷新后自动恢复，避免管理员反复重新筛选。同时提供「最近访问」用于命令面板默认置顶。
+window.tdPref = (function(){
+    var PREFIX = 'td_pref_';
+    function _k(page, key) { return PREFIX + page + '_' + key; }
+    function get(page, key, def) {
+        try { var v = localStorage.getItem(_k(page, key)); return v === null ? def : v; }
+        catch (e) { return def; }
+    }
+    function set(page, key, val) {
+        try { localStorage.setItem(_k(page, key), String(val)); } catch (e) {}
+    }
+    function bind(page, el, key) {
+        if (!el) return;
+        var saved = get(page, key, null);
+        if (saved !== null && saved !== undefined) el.value = saved;
+        var evt = (el.tagName === 'SELECT') ? 'change' : 'input';
+        el.addEventListener(evt, function() { set(page, key, el.value); });
+        // 兼容 select 也响应 change（上面 evt 已覆盖）
+        if (el.tagName === 'SELECT') el.addEventListener('change', function() { set(page, key, el.value); });
+    }
+    // ── 最近访问页面（最多 5 个），供命令面板默认展示 ──
+    var RECENT_KEY = 'td_recent';
+    function pushRecent(href) {
+        if (!href) return;
+        try {
+            var arr = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+            arr = [href].concat(arr.filter(function(h){ return h !== href; }));
+            arr = arr.slice(0, 5);
+            localStorage.setItem(RECENT_KEY, JSON.stringify(arr));
+        } catch (e) {}
+    }
+    function getRecent() {
+        try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
+        catch (e) { return []; }
+    }
+    return { get: get, set: set, bind: bind, pushRecent: pushRecent, getRecent: getRecent };
+})();
+
+// ─── 通用：复制到剪贴板并给反馈（参考 GitHub 复制按钮 + Vercel 一键复制 token） ───
+// 用法：tdCopy('文本', '已复制 token') 或 tdCopy(textEl.value, '已复制路径')
+window.tdCopy = function(text, successMsg) {
+    function _fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch(e) {}
+        document.body.removeChild(ta);
+    }
+    var done = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ done = true; }).catch(_fallback).then(function(){
+            if (typeof showToast === 'function') showToast(successMsg || '已复制', 'success');
+        });
+    } else {
+        _fallback();
+        if (typeof showToast === 'function') showToast(successMsg || '已复制', 'success');
+    }
+};
+
 // ─── 通用：可见性感知的轮询注册器 ───
 // 各页面模块（dashboard/scheduler/watchdog/logs/status）共用此机制，
 // 页面隐藏或网络离线时统一暂停所有轮询，可见/恢复时统一恢复，节省移动端后台电量。
@@ -497,3 +628,117 @@ if (document.getElementById('sidebarStatus') ||
     // 首次渲染后再次扫描一次（覆盖脚本动态注入的初始元素）
     setTimeout(enhanceA11y, 300);
 })();
+
+// ─── 导航进度条（参考 NProgress / GitHub 顶部进度条 / Vercel 导航反馈） ───
+// 全页刷新场景下消除"白屏闪烁"，弱网移动端感知更顺畅。
+// 拦截同源 <a> 点击：启动进度条；DOMContentLoaded 推进到 100% 并淡出。
+(function(){
+    var bar = document.createElement('div');
+    bar.id = 'tdNavProgress';
+    bar.style.cssText = 'position:fixed;top:0;left:0;height:2px;width:0;background:var(--primary);z-index:10000;opacity:0;transition:width .25s ease, opacity .3s ease;pointer-events:none;border-radius:0 2px 2px 0;box-shadow:0 0 8px var(--primary)';
+    // 移动端安全区域：进度条不遮挡 status bar
+    bar.style.top = 'env(safe-area-inset-top, 0px)';
+    document.documentElement.appendChild(bar);
+    var w = 0, timer = null, done = false;
+    function _set(p) { w = p; bar.style.width = p + '%'; bar.style.opacity = '1'; }
+    window._navStart = function() {
+        done = false; _set(0);
+        if (timer) clearInterval(timer);
+        timer = setInterval(function() {
+            // 缓慢推进到 85%，模拟真实进度感
+            _set(Math.min(w + Math.random() * 12 + 3, 85));
+        }, 220);
+    };
+    window._navDone = function() {
+        if (done) return; done = true;
+        if (timer) { clearInterval(timer); timer = null; }
+        _set(100);
+        setTimeout(function(){ bar.style.opacity = '0'; }, 200);
+        setTimeout(function(){ bar.style.width = '0%'; }, 500);
+    };
+    // 同源导航链接点击触发
+    document.addEventListener('click', function(e) {
+        var a = e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        if (a.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey) return;
+        var href = a.getAttribute('href');
+        if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) return;
+        if (a.hasAttribute('download')) return;
+        try {
+            if (a.origin === location.origin && a.pathname !== location.pathname) {
+                window._navStart();
+                // 记录最近访问
+                if (window.tdPref) tdPref.pushRecent(a.pathname);
+            }
+        } catch(_) {}
+    });
+    // 首次加载完成时若有进度条则结束
+    if (document.readyState === 'complete') window._navDone();
+    else window.addEventListener('load', window._navDone);
+    // 兜底：8 秒未完成也强制结束，避免卡在 85%
+    setTimeout(function() { if (!done) window._navDone(); }, 8000);
+})();
+
+// ─── 通知中心：Toast 历史归档（参考 Linear 通知中心 / GitHub 通知下拉） ───
+// showToast 自动写入历史，侧边栏铃铛显示未读数，点击展开历史面板。
+var _TOAST_HISTORY = [];
+var _TOAST_HISTORY_MAX = 50;
+var _NOTIFY_UNREAD = 0;
+function _archiveToast(msg, type, opts) {
+    var item = { msg: msg, type: type || 'info', ts: Date.now(), action: (opts && opts.action && opts.action.label) || null };
+    _TOAST_HISTORY.unshift(item);
+    if (_TOAST_HISTORY.length > _TOAST_HISTORY_MAX) _TOAST_HISTORY.length = _TOAST_HISTORY_MAX;
+    // 错误/警告类记入未读，info/success 不打扰
+    if (type === 'error' || type === 'warning') _NOTIFY_UNREAD++;
+    _updateNotifyBadge();
+}
+function _updateNotifyBadge() {
+    var badge = document.getElementById('notifyBadge');
+    if (!badge) return;
+    if (_NOTIFY_UNREAD > 0) {
+        badge.textContent = _NOTIFY_UNREAD > 99 ? '99+' : _NOTIFY_UNREAD;
+        badge.style.display = '';
+        badge.setAttribute('aria-label', _NOTIFY_UNREAD + ' 条未读通知');
+    } else {
+        badge.style.display = 'none';
+        badge.removeAttribute('aria-label');
+    }
+}
+function _fmtTs(ts) {
+    var d = new Date(ts);
+    var now = Date.now();
+    var diff = (now - ts) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function openNotifyPanel() {
+    var modal = document.getElementById('notifyModal');
+    if (!modal) return;
+    _renderNotifyList();
+    _openModal('notifyModal');
+    _NOTIFY_UNREAD = 0;
+    _updateNotifyBadge();
+}
+function _renderNotifyList() {
+    var list = document.getElementById('notifyList');
+    if (!list) return;
+    if (_TOAST_HISTORY.length === 0) {
+        list.innerHTML = '<div class="empty-state" style="padding:40px 20px"><div class="icon" aria-hidden="true">🔔</div><div class="empty-title">暂无通知</div><p class="empty-hint">操作产生的通知会显示在这里</p></div>';
+        return;
+    }
+    var esc = window._escHtml || String;
+    list.innerHTML = _TOAST_HISTORY.map(function(it) {
+        var cls = 'notify-item notify-' + it.type;
+        var ico = it.type === 'error' ? '⚠️' : (it.type === 'warning' ? '⚡' : (it.type === 'success' ? '✓' : 'ℹ'));
+        var actHtml = it.action ? '<button class="notify-action" type="button">' + esc(it.action) + '</button>' : '';
+        return '<div class="' + cls + '">' +
+            '<span class="notify-ico" aria-hidden="true">' + ico + '</span>' +
+            '<div class="notify-body"><div class="notify-msg">' + esc(it.msg) + '</div>' +
+            '<div class="notify-ts">' + _fmtTs(it.ts) + '</div></div>' +
+            actHtml + '</div>';
+    }).join('');
+}
+window._archiveToast = _archiveToast;
