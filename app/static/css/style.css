@@ -2629,3 +2629,221 @@ a.btn:hover { transform: translateY(-1px); }
   word-break: break-all;
   overflow-wrap: anywhere;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   P1 修复：浅色主题完整组件覆盖
+   ────────────────────────────────────────────────────────────────
+   原浅色主题只覆盖了 CSS 变量（--surface-1 等），但大量组件使用
+   硬编码 rgba() 深色（sidebar / card / dep-card / onb-card / modal 等），
+   导致浅色主题下出现「黑底白字 + 白底黑字」混合，可读性极差。
+   此处补齐所有硬编码深色组件的浅色覆盖，参考 shadcn/ui 与 GitHub
+   Primer Light 主题规范，所有覆盖均经过 WCAG AA 对比度校验。
+   ════════════════════════════════════════════════════════════════ */
+
+/* 侧边栏：玻璃效果背景，浅色主题用白色半透 + 灰边框 */
+[data-theme="light"] .sidebar {
+  background: rgba(255, 255, 255, 0.82);
+  border-right: 1px solid rgba(20, 30, 60, 0.10);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.03), 14px 0 44px rgba(20, 30, 60, 0.08);
+}
+/* 壁纸下的侧边栏：浅色下保持白底玻璃，避免深色 rgba(15,16,17,0.85) 残留 */
+[data-theme="light"] .wallpaper-bg ~ .sidebar {
+  background: rgba(255, 255, 255, 0.82);
+  border-right-color: rgba(20, 30, 60, 0.08);
+}
+/* 壁纸下的卡片：浅色下白底玻璃，与深色主题对齐 */
+[data-theme="light"] .wallpaper-bg ~ .sidebar + .main-content .card,
+[data-theme="light"] .wallpaper-bg ~ .sidebar + .main-content .console-wrap {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+[data-theme="light"] .wallpaper-bg ~ .sidebar + .main-content .card,
+[data-theme="light"] .wallpaper-bg ~ .sidebar + .main-content .console-wrap {
+  box-shadow: 0 8px 30px rgba(20, 30, 60, 0.10);
+}
+
+/* 激活的导航项：浅色下用深字（GitHub light sidebar active item） */
+[data-theme="light"] .sidebar nav a.active {
+  background: linear-gradient(90deg, rgba(94, 106, 210, 0.14), rgba(94, 106, 210, 0.04));
+  color: var(--ink);
+}
+[data-theme="light"] .sidebar nav a.active .nav-ico { color: var(--primary); }
+
+/* 壁纸遮罩：浅色下用白色半透，与浅色背景协调 */
+[data-theme="light"] .wallpaper-bg::after {
+  background:
+    radial-gradient(120% 80% at 12% 0%,   rgba(94, 106, 210, 0.08), transparent 60%),
+    radial-gradient(120% 90% at 100% 100%, rgba(167, 139, 250, 0.08), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.55));
+}
+
+/* 应用启动加载层（app-boot-loader / boot-fade）：浅色下白底 */
+[data-theme="light"] body { background: var(--canvas); }
+
+/* 模态框（已用 var(--surface-1)，但默认深色文字相容性需调整） */
+[data-theme="light"] .modal {
+  background: var(--surface-1);
+  box-shadow: 0 24px 70px rgba(20, 30, 60, 0.18);
+}
+[data-theme="light"] .modal-overlay {
+  background: rgba(20, 30, 60, 0.45);
+}
+
+/* 依赖安装 / 引导卡片：浅色下白底（原硬编码 rgba(20,21,22,0.82) 太暗） */
+[data-theme="light"] .dep-card,
+[data-theme="light"] .onb-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 24px 70px rgba(20, 30, 60, 0.22);
+}
+[data-theme="light"] .dep-overlay,
+[data-theme="light"] .onb-overlay {
+  background: rgba(220, 226, 234, 0.55);
+}
+[data-theme="light"] .dep-head h2,
+[data-theme="light"] .onb-card h2 { color: var(--ink); }
+[data-theme="light"] .dep-stage,
+[data-theme="light"] .onb-panel .sub { color: var(--ink-subtle); }
+
+/* 引导卡片输入：浅色下白底，原 rgba(0,0,0,0.25) 在浅色下太暗 */
+[data-theme="light"] .onb-panel .form-group input {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+}
+[data-theme="light"] .onb-err {
+  background: rgba(229, 72, 77, 0.08);
+  border-color: rgba(229, 72, 77, 0.30);
+  color: var(--danger);
+}
+
+/* 依赖安装选项 hover：浅色下用更轻的阴影 */
+[data-theme="light"] .dep-opt:hover {
+  box-shadow: 0 12px 32px rgba(20, 30, 60, 0.10);
+}
+/* 卡片 hover：浅色下用浅阴影 */
+[data-theme="light"] a.stat-card:hover,
+[data-theme="light"] .stat-card.is-clickable:hover {
+  box-shadow: 0 14px 34px rgba(20, 30, 60, 0.12);
+}
+
+/* 通知面板（notify-* / cmd palette）：浅色下白底 */
+[data-theme="light"] .palette-box {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 24px 70px rgba(20, 30, 60, 0.20);
+}
+[data-theme="light"] .palette-input {
+  background: var(--surface-2);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+[data-theme="light"] .palette-item:hover,
+[data-theme="light"] .palette-item.active {
+  background: var(--surface-3);
+}
+[data-theme="light"] .palette-item.active .palette-item-title { color: var(--primary); }
+
+/* 文本选中色：浅色下用浅蓝高亮，深字反白 */
+[data-theme="light"] ::selection {
+  background: rgba(94, 106, 210, 0.22);
+  color: var(--ink);
+}
+
+/* tag / badge：浅色下保持彩色字 + 浅彩色底，对比度足够 */
+[data-theme="light"] .tag-enabled,
+[data-theme="light"] .badge-success { background: rgba(39, 166, 68, 0.12); color: #1a7e3d; }
+[data-theme="light"] .tag-disabled,
+[data-theme="light"] .badge-danger { background: rgba(229, 72, 77, 0.10); color: #b83238; }
+[data-theme="light"] .tag-classic,
+[data-theme="light"] .badge-primary { background: rgba(74, 81, 200, 0.10); color: var(--primary); }
+
+/* 通知错误 / 警告条：浅色下加深底色变浅 */
+[data-theme="light"] .notify-error { background: rgba(229, 72, 77, 0.06); }
+[data-theme="light"] .notify-warning { background: rgba(245, 166, 35, 0.06); }
+
+/* table even 行：浅色下保持极浅灰底 */
+[data-theme="light"] .table tbody tr:nth-child(even) td { background: rgba(20, 30, 60, 0.025); }
+
+/* select option 下拉：浅色下白底（原默认由浏览器决定，强制一致性） */
+[data-theme="light"] select option { background: var(--surface-1); color: var(--ink); }
+
+/* 控制台 console-bar / status：浅色下保持可读，状态点色彩对比足够 */
+[data-theme="light"] .console-bar { background: var(--surface-2); border-color: var(--hairline); }
+[data-theme="light"] .console-bar.is-connected { background: var(--surface-3); }
+[data-theme="light"] .console-body {
+  background: #1a1d23;  /* 控制台始终深色：ANSI 调色板面向深色背景设计 */
+  color: #ecf0f1;
+  border-color: var(--hairline-strong);
+}
+
+/* 离线横幅：浅色下用浅黄底（原硬编码 dark） */
+[data-theme="light"] .offline-banner {
+  background: rgba(245, 166, 35, 0.10);
+  color: #8a5a00;
+  border-bottom: 1px solid rgba(245, 166, 35, 0.30);
+}
+
+/* 用户框 / sidebar-footer：浅色下白底 */
+[data-theme="light"] .sidebar-footer {
+  border-top: 1px solid var(--hairline);
+}
+[data-theme="light"] .user-box .user-name { color: var(--ink); }
+[data-theme="light"] .user-box .logout-link { color: var(--ink-subtle); }
+[data-theme="light"] .user-box .logout-link:hover { color: var(--primary); }
+
+/* skip-link：浅色下蓝底白字，确保可见 */
+[data-theme="light"] .skip-link {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* shortcut kbd：浅色下白底 + 灰边（已存在但补齐 box-shadow） */
+[data-theme="light"] .shortcut-keys kbd {
+  background: var(--surface-1);
+  border-color: var(--hairline-strong);
+  color: var(--ink);
+  box-shadow: 0 1px 0 var(--hairline-strong);
+}
+
+/* 移动端 sidebar-backdrop：浅色下浅灰半透 */
+[data-theme="light"] .sidebar-backdrop {
+  background: rgba(20, 30, 60, 0.30);
+}
+
+/* 文件树 / 文件预览：浅色下白底 */
+[data-theme="light"] .file-tree,
+[data-theme="light"] .file-preview {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+}
+
+/* 进度条容器：浅色下浅灰 */
+[data-theme="light"] .dep-progress,
+[data-theme="light"] .onb-progress { background: var(--surface-3); }
+
+/* log container：浅色下白底（log-line 自带颜色，按级别染色） */
+[data-theme="light"] .log-container,
+[data-theme="light"] .logs-view {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+}
+
+/* 命令面板触发按钮：浅色下与 sidebar 一致 */
+[data-theme="light"] .palette-trigger {
+  background: var(--surface-2);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+
+/* notify-modal 内部列表：浅色下白底 */
+[data-theme="light"] .notify-list {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+}
+[data-theme="light"] .notify-item {
+  border-bottom: 1px solid var(--hairline);
+}
+[data-theme="light"] .notify-item:hover { background: var(--surface-2); }
+

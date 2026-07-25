@@ -403,6 +403,16 @@ class ToolDeltaManager:
         Web 控制台即作为终端模拟器，用户可完整操作所有菜单和提示。"""
         main_py = self.app.config["TOOLDELTA_MAIN"]
         td_dir = self.app.config["TOOLDELTA_DIR"]
+        # 选择 Python 解释器：若 dependency_service 已找到兼容解释器（如 3.12）则用之，
+        # 否则用当前进程 sys.executable。修复「面板 Python 3.14 不兼容 ToolDelta 时
+        # 子进程立即 ModuleNotFoundError 崩溃、控制台显示未连接」的问题。
+        python_bin = sys.executable
+        try:
+            from app.dependency_service import dependency_service as _ds
+            if _ds and getattr(_ds, "_resolved_python", None):
+                python_bin = _ds._resolved_python
+        except Exception:
+            pass
         try:
             startupinfo = None
             if os.name == "nt":
@@ -433,7 +443,7 @@ class ToolDeltaManager:
                 master, slave = pty.openpty()
                 self.pty_master = master
                 self.process = subprocess.Popen(
-                    [sys.executable, main_py],
+                    [python_bin, main_py],
                     cwd=td_dir,
                     stdin=subprocess.PIPE,
                     stdout=slave,
@@ -448,7 +458,7 @@ class ToolDeltaManager:
                 # 检测到 TTY 而输出 ANSI；Windows 无 pty，改为用 FORCE_COLOR/CLICOLOR_FORCE
                 # 环境强制子进程在管道下仍输出 ANSI 真彩转义，Web 端再转成彩色 HTML。
                 self.process = subprocess.Popen(
-                    [sys.executable, main_py],
+                    [python_bin, main_py],
                     cwd=td_dir,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,

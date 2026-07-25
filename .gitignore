@@ -48,3 +48,4 @@ build_info.json
 
 # ── 自检结果产物（每次自检生成，不提交）──
 selfcheck_summary.txt
+selfcheck_multi_summary.txt

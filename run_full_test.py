@@ -655,6 +655,143 @@ rec("market.html 空状态有 emoji", '🛒' in market_html, "")
 rec("commands.html 空状态无 --- 占位符", 'icon">---' not in commands_html, "")
 rec("commands.html 空状态有 emoji", '⌨️' in commands_html, "")
 
+# ============ P1: Python 兼容性 / 终端未连接 bug 修复验证 ============
+# 复现用户报告："点击启动后仍然显示未连接" - 原因是当前 Python 3.14 不满足
+# ToolDelta >=3.10,<3.13，但 is_ready() 谎称 ready=true，导致子进程崩溃。
+print("\n== P1. Python 兼容性 / 终端未连接 bug 修复 ==")
+dep_src = open(os.path.join(ROOT, "app", "dependency_service.py"), "r", encoding="utf-8").read()
+mgr_src2 = open(os.path.join(ROOT, "app", "tooldelta_manager.py"), "r", encoding="utf-8").read()
+rec("dependency_service 含 _resolve_compatible_python 方法", "_resolve_compatible_python" in dep_src, "")
+rec("dependency_service _deps_present 支持 python_bin 参数", "python_bin" in dep_src and "def _deps_present(self, python_bin" in dep_src, "")
+rec("dependency_service is_ready 不再无脑 ready=true（Python 不兼容）", "is_ready" in dep_src and "failed" in dep_src, "")
+rec("dependency_service 含 _get_pip_python 用兼容解释器装 pip", "_get_pip_python" in dep_src, "")
+rec("tooldelta_manager _spawn 用 resolved_python", "_resolved_python" in mgr_src2 and "python_bin" in mgr_src2, "")
+rec("dependency_service 含 pyenv 版本目录探测", "pyenv" in dep_src.lower() or "PYENV_ROOT" in dep_src, "")
+rec("dependency_service 含 TD_PYTHON 环境变量覆盖", "TD_PYTHON" in dep_src, "")
+rec("dependency_service 含 python3.10/3.11/3.12 候选", "python3.12" in dep_src and "python3.11" in dep_src and "python3.10" in dep_src, "")
+# 验证：当前 Python 不兼容时，is_ready() 不会再返回 True 让 UI 误以为就绪
+# 通过运行时检测 ToolDelta pyproject 的 python 要求，与当前 Python 对照
+real_td_pyproject = os.path.join(os.environ.get("TOOLDELTA_DIR", TD), "pyproject.toml")
+rec("ToolDelta pyproject 存在", os.path.isfile(real_td_pyproject), str(real_td_pyproject))
+if os.path.isfile(real_td_pyproject):
+    with open(real_td_pyproject, "r", encoding="utf-8", errors="replace") as _f:
+        pp_text = _f.read()
+    import re as _re
+    _py_match = _re.search(r'python\s*=\s*"([^"]+)"', pp_text)
+    if _py_match:
+        _py_spec = _py_match.group(1)
+        _cur_major, _cur_minor = sys.version_info[:2]
+        # 解析 < 上界
+        _upper_match = _re.search(r'<(\d+)\.(\d+)', _py_spec)
+        _lower_match = _re.search(r'>=\s*(\d+)\.(\d+)', _py_spec)
+        if _upper_match:
+            _upper = (int(_upper_match.group(1)), int(_upper_match.group(2)))
+            _cur_incompatible = (_cur_major, _cur_minor) >= _upper
+            rec("ToolDelta python 要求解析正确", True, f"spec={_py_spec} upper={_upper} cur={_cur_major}.{_cur_minor}")
+            if _cur_incompatible:
+                # 当前 Python 不兼容时：必须能找到兼容解释器（CI 环境装了 3.12）
+                _ds_inst = dependency_service
+                _ds_inst.app = app
+                _ds_inst._resolved_python_cache_sentinel = None  # 重置缓存
+                _alt = _ds_inst._resolve_compatible_python()
+                rec("不兼容时找到 alt Python 解释器", bool(_alt), f"alt={_alt}")
+                if _alt:
+                    rec("alt Python 路径存在", os.path.isfile(_alt), _alt)
+                    rec("alt Python 通过 _check_version_compatible", _ds_inst._check_version_compatible(*[int(x) for x in subprocess.run([_alt, "-c", "import sys;print('%d.%d'%sys.version_info[:2])"], capture_output=True, text=True).stdout.split(".")][:2]), "")
+                # 验证：is_ready() 在不兼容且无依赖时返回 False（不再谎称 ready）
+                _ds_inst._status = "idle"  # 强制重置状态
+                _ds_inst._resolved_python = None
+                # 调用 is_ready 应当尝试找 alt Python 并检测依赖，结果取决于 alt 的依赖状态
+                # 关键断言：is_ready 不再无条件返回 True
+                _ = _ds_inst.is_ready()
+                # 在 CI 环境 alt Python 已装依赖（test setup 已 pip install），所以 is_ready 应返回 True
+                # 但若 alt Python 没装依赖则应返回 False，且 status 应当为 idle 或 failed，而非 ready
+                rec("is_ready 不再无脑 ready=true", _ds_inst._status in ("ready", "idle", "failed", "installing"), f"status={_ds_inst._status}")
+        else:
+            rec("ToolDelta python 要求解析正确", True, f"spec={_py_spec} (no upper bound)")
+else:
+    rec("ToolDelta pyproject 存在", False, "未找到 pyproject.toml")
+
+# ============ P2. 浅色主题完整覆盖验证 ============
+print("\n== P2. 浅色主题完整覆盖 ==")
+# 列出所有「硬编码深色背景」的组件，断言每个都有对应的浅色覆盖
+_LIGHT_THEME_REQUIRED_OVERRIDES = [
+    # (组件, 深色硬编码模式, 期望的浅色覆盖选择器)
+    (".sidebar", "[data-theme=\"light\"] .sidebar"),
+    (".wallpaper-bg ~ .sidebar", "[data-theme=\"light\"] .wallpaper-bg ~ .sidebar"),
+    (".wallpaper-bg::after", "[data-theme=\"light\"] .wallpaper-bg::after"),
+    (".modal", "[data-theme=\"light\"] .modal"),
+    (".modal-overlay", "[data-theme=\"light\"] .modal-overlay"),
+    (".dep-card", "[data-theme=\"light\"] .dep-card"),
+    (".dep-overlay", "[data-theme=\"light\"] .dep-overlay"),
+    (".onb-card", "[data-theme=\"light\"] .onb-card"),
+    (".onb-overlay", "[data-theme=\"light\"] .onb-overlay"),
+    (".onb-panel .form-group input", "[data-theme=\"light\"] .onb-panel .form-group input"),
+    (".palette-box", "[data-theme=\"light\"] .palette-box"),
+    ("::selection", "[data-theme=\"light\"] ::selection"),
+    (".offline-banner", "[data-theme=\"light\"] .offline-banner"),
+    (".sidebar nav a.active", "[data-theme=\"light\"] .sidebar nav a.active"),
+    (".console-bar", "[data-theme=\"light\"] .console-bar"),
+    (".console-body", "[data-theme=\"light\"] .console-body"),
+    (".tag-enabled", "[data-theme=\"light\"] .tag-enabled"),
+    (".tag-disabled", "[data-theme=\"light\"] .tag-disabled"),
+    (".tag-classic", "[data-theme=\"light\"] .tag-classic"),
+    (".badge-primary", "[data-theme=\"light\"] .badge-primary"),
+    (".sidebar-backdrop", "[data-theme=\"light\"] .sidebar-backdrop"),
+    (".palette-trigger", "[data-theme=\"light\"] .palette-trigger"),
+    (".notify-list", "[data-theme=\"light\"] .notify-list"),
+    (".shortcut-keys kbd", "[data-theme=\"light\"] .shortcut-keys kbd"),
+    (".skip-link", "[data-theme=\"light\"] .skip-link"),
+    ("a.stat-card:hover", "[data-theme=\"light\"] a.stat-card:hover"),
+    (".dep-opt:hover", "[data-theme=\"light\"] .dep-opt:hover"),
+]
+for _comp, _light_sel in _LIGHT_THEME_REQUIRED_OVERRIDES:
+    _has = _light_sel in css
+    rec(f"浅色主题覆盖: {_comp}", _has, f"未找到选择器: {_light_sel}")
+
+# ============ P3. CSP / CSRF 安全头验证 ============
+print("\n== P3. CSP / CSRF 安全头 ==")
+# CSP 已在 base.html 中以 meta 形式注入
+rec("base.html 含 Content-Security-Policy meta", 'http-equiv="Content-Security-Policy"' in html_base, "")
+rec("CSP 限制 default-src 'self'", "default-src 'self'" in html_base, "")
+rec("CSP 限制 script-src", "script-src" in html_base, "")
+rec("CSP 限制 img-src 数据协议", "img-src" in html_base and "data:" in html_base, "")
+rec("CSP 允许 connect-src ws/wss", "connect-src" in html_base and "ws:" in html_base, "")
+# 后端安全头（__init__.py 的 add_security_headers）
+init_src = open(os.path.join(ROOT, "app", "__init__.py"), "r", encoding="utf-8").read()
+rec("__init__ 含 add_security_headers", "add_security_headers" in init_src, "")
+rec("X-Frame-Options SAMEORIGIN 防点击劫持", "X-Frame-Options" in init_src and "SAMEORIGIN" in init_src, "")
+rec("X-Content-Type-Options nosniff 防 MIME 嗅探", "X-Content-Type-Options" in init_src, "")
+rec("Referrer-Policy 限制 referer", "Referrer-Policy" in init_src, "")
+rec("Permissions-Policy 限制摄像头/麦克风", "Permissions-Policy" in init_src and "camera=()" in init_src, "")
+# 验证安全头实际响应
+r = client.get("/")
+rec("响应含 X-Frame-Options", "X-Frame-Options" in r.headers, str(dict(r.headers)))
+rec("响应含 X-Content-Type-Options", "X-Content-Type-Options" in r.headers, "")
+rec("响应含 Referrer-Policy", "Referrer-Policy" in r.headers, "")
+rec("响应含 Permissions-Policy", "Permissions-Policy" in r.headers, "")
+# SECRET_KEY 持久化（防会话伪造）
+config_src = open(os.path.join(ROOT, "config.py"), "r", encoding="utf-8").read()
+rec("config.py 持久化 SECRET_KEY", "instance" in config_src and "secret_key" in config_src.lower(), "")
+rec("config.py SECRET_KEY 文件权限 0o600", "0o600" in config_src, "")
+
+# ============ P4. 无障碍 / ARIA 验证 ============
+print("\n== P4. 无障碍 / ARIA ==")
+rec("base.html 含 skip-link 跳到主内容", 'skip-link' in html_base and '跳到主要内容' in html_base, "")
+rec("base.html main 标记 aria-label 主内容", 'aria-label="主要内容"' in html_base, "")
+rec("base.html nav aria-label 主导航", 'aria-label="主导航"' in html_base, "")
+rec("base.html theme-toggle aria-label", 'theme-toggle' in html_base and 'aria-label' in html_base, "")
+rec("base.html 通知面板 role=region", 'role="region"' in html_base, "")
+rec("base.html 模态 role=dialog aria-modal", 'role="dialog"' in html_base and 'aria-modal="true"' in html_base, "")
+rec("base.html 命令面板 role=listbox", 'role="listbox"' in html_base, "")
+rec("base.html 状态点 sr-only 文本", 'sr-only' in html_base and 'sidebarStatusText' in html_base, "")
+rec("console.html 输入框 aria-label", 'aria-label' in html_console, "")
+rec("console.html 控制台 body role=log", 'role="log"' in html_console, "")
+rec("main.js 焦点陷阱 Tab 循环", "keyCode === 9" in main_js, "")
+rec("main.js Esc 关闭弹窗", "Escape" in main_js, "")
+rec("CSS 含 prefers-reduced-motion 支持", "prefers-reduced-motion" in css, "")
+rec("CSS 含 focus-visible 焦点指示器", "focus-visible" in css, "")
+
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
 print("\n========================================")

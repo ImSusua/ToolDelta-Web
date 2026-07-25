@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import ssl
+import shutil
 import threading
 import subprocess
 import urllib.request
@@ -69,6 +70,11 @@ class DependencyService:
         self._install_total = 0
         self._install_done = 0
         self._last_broadcast = 0.0
+        # 已解析的兼容 Python 解释器（当主进程 Python 不满足 ToolDelta 要求时使用）。
+        # None=未探测；""=探测过但没找到；其他字符串=找到的绝对路径。
+        self._resolved_python = None
+        # 内部缓存哨兵：避免重复子进程探测。None=未探测；""=没找到；其他=路径。
+        self._resolved_python_cache_sentinel = None
 
     # ─── 初始化 ────────────────────────────────
 
@@ -122,20 +128,48 @@ class DependencyService:
     def is_ready(self):
         if self._status == "ready":
             return True
-        # 若当前 Python 版本不满足 ToolDelta pyproject.toml 声明的范围，
-        # 强行安装只会耗时/失败且无意义；此时视为“就绪”以放行启动流程，
-        # 让子进程自己报出版本不兼容的明确错误，而不是让面板永远卡在安装中。
+        # 若当前 Python 不满足 ToolDelta 要求，尝试找一个兼容的解释器（3.10/3.11/3.12）
+        # 并用它来检测/安装依赖；找不到才真正失败。
         compat, spec = self._python_compatible()
         if not compat:
+            alt = self._resolve_compatible_python()
+            if not alt:
+                # 既无兼容 Python，依赖又不可能装上：明确标 failed，不再“谎称 ready”
+                # 让 UI 透出明确错误，避免用户点“启动”后看到“未连接”而无所适从。
+                with self._lock:
+                    self._status = "failed"
+                    self._progress = 100
+                    self._stage = (
+                        f"当前 Python {sys.version_info.major}.{sys.version_info.minor} "
+                        f"不满足 ToolDelta 要求 ({spec})，且未找到 3.10/3.11/3.12 解释器。"
+                        f"请安装兼容版本后再启动。"
+                    )
+                    self._error = self._stage
+                self._emit_progress(force=True)
+                return False
+            # 找到兼容解释器：用它的环境做依赖检测，避免主进程 Python 与子进程 Python
+            # 各自独立 site-packages 导致误判。
+            if self._deps_present(python_bin=alt):
+                with self._lock:
+                    self._status = "ready"
+                    self._progress = 100
+                    self._stage = (
+                        f"依赖已就绪（使用 {alt} 运行 ToolDelta）"
+                    )
+                    self._resolved_python = alt
+                self._emit_progress(force=True)
+                return True
+            # 兼容 Python 找到了但依赖没装：不直接返回 True（这会让 start() 误以为已就绪），
+            # 而是保持 idle 让 _ensure_dependencies/start_install 用 alt 去装依赖。
             with self._lock:
-                self._status = "ready"
-                self._progress = 100
-                self._stage = (
-                    f"当前 Python {sys.version_info.major}.{sys.version_info.minor} "
-                    f"不满足 ToolDelta 要求 ({spec})，跳过依赖安装"
-                )
+                if self._status not in ("installing", "ready"):
+                    self._status = "idle"
+                    self._stage = (
+                        f"已找到兼容解释器 {alt}，请选择依赖安装方式"
+                    )
+                self._resolved_python = alt
             self._emit_progress(force=True)
-            return True
+            return False
         # 离线安装后依赖已装但 status 可能仍为 idle（maybe_auto_install 改为只检测不触发后），
         # 用 import 探测做实检，就绪则自动更新状态为 ready，避免 _ensure_dependencies 误判。
         if self._deps_present():
@@ -155,13 +189,160 @@ class DependencyService:
             return ""
         return self.app.config["TOOLDELTA_DIR"]
 
-    def _deps_present(self):
+    def _deps_present(self, python_bin=None):
+        """检测 ToolDelta 运行依赖是否已安装。
+
+        python_bin=None：使用当前进程 Python 的 importlib 探测。
+        python_bin=<path>：用指定解释器子进程探测其 site-packages。
+          这是为了应对 Web 面板 Python 与 ToolDelta 子进程 Python 不一致的场景
+          （如面板跑在 3.14，ToolDelta 需要 3.10/3.11/3.12）。
+        """
+        if python_bin is None or python_bin == sys.executable:
+            try:
+                missing = [m for m in _LIGHTWEIGHT_CHECK
+                           if importlib.util.find_spec(m) is None]
+                return not missing
+            except Exception:
+                return False
+        # 跨解释器检测：用子进程 import 探测目标 site-packages 是否齐备
         try:
-            missing = [m for m in _LIGHTWEIGHT_CHECK
-                       if importlib.util.find_spec(m) is None]
-            return not missing
+            code = (
+                "import importlib.util, sys\n"
+                "missing=[m for m in %r if importlib.util.find_spec(m) is None]\n"
+                "sys.exit(0 if not missing else 1)\n"
+            ) % (_LIGHTWEIGHT_CHECK,)
+            proc = subprocess.run(
+                [python_bin, "-c", code],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+            return proc.returncode == 0
         except Exception:
             return False
+
+    # 兼容 Python 解释器候选：与 pyproject `python = ">=3.10,<3.13"` 对齐。
+    # 顺序按 ToolDelta 官方推荐度排序：3.12 > 3.11 > 3.10。
+    _COMPAT_PYTHON_CANDIDATES = (
+        "python3.12", "python3.11", "python3.10",
+        "python3.12.exe", "python3.11.exe", "python3.10.exe",
+    )
+
+    def _resolve_compatible_python(self):
+        """当前 Python 不满足 ToolDelta 要求时，搜索系统中可用的兼容解释器。
+
+        优先级：
+        1. 环境变量 TD_PYTHON（用户显式指定，最高优先级）
+        2. pyenv 版本目录（/root/.pyenv/versions/3.12.x/bin/python3.12 等）
+        3. PATH 上的 python3.10 / python3.11 / python3.12
+        找到后缓存，避免每次启动都重复探测。返回绝对路径字符串或 None。
+        """
+        if getattr(self, "_resolved_python_cache_sentinel", None) is not None:
+            return self._resolved_python_cache_sentinel
+
+        def _check_compat(python_bin):
+            """快速验证解释器存在且满足 pyproject python 要求。"""
+            if not python_bin or not os.path.isfile(python_bin):
+                return False
+            try:
+                # 直接复用 _python_compatible 的解析逻辑，但用目标解释器版本号
+                proc = subprocess.run(
+                    [python_bin, "-c",
+                     "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    timeout=8,
+                )
+                if proc.returncode != 0:
+                    return False
+                ver_str = (proc.stdout or b"").decode(errors="replace").strip()
+                parts = ver_str.split(".")
+                if len(parts) < 2:
+                    return False
+                major, minor = int(parts[0]), int(parts[1])
+                # 与 pyproject >=3.10,<3.13 硬编码对齐（pyproject 解析已在
+                # _python_compatible 中实现，此处用子进程版本走相同逻辑）。
+                compat, _ = self._check_version_compatible(major, minor)
+                return compat
+            except Exception:
+                return False
+
+        candidates = []
+
+        # 1. 环境变量优先
+        env_py = os.environ.get("TD_PYTHON")
+        if env_py:
+            candidates.append(env_py)
+
+        # 2. pyenv 版本目录
+        try:
+            pyenv_root = os.environ.get("PYENV_ROOT") or os.path.expanduser("~/.pyenv")
+            versions_dir = os.path.join(pyenv_root, "versions")
+            if os.path.isdir(versions_dir):
+                for v in sorted(os.listdir(versions_dir), reverse=True):
+                    # 仅取 3.10 / 3.11 / 3.12 前缀的版本目录
+                    if v.startswith(("3.10", "3.11", "3.12")):
+                        for bn in ("python3", "python", "python3.12", "python3.11", "python3.10"):
+                            p = os.path.join(versions_dir, v, "bin", bn)
+                            if os.path.isfile(p):
+                                candidates.append(p)
+                                break
+        except Exception:
+            pass
+
+        # 3. PATH 上的候选
+        for name in self._COMPAT_PYTHON_CANDIDATES:
+            try:
+                p = shutil.which(name)
+                if p:
+                    candidates.append(p)
+            except Exception:
+                pass
+
+        for c in candidates:
+            if _check_compat(c):
+                self._resolved_python_cache_sentinel = c
+                return c
+        self._resolved_python_cache_sentinel = ""
+        return ""
+
+    def _check_version_compatible(self, major, minor):
+        """与 _python_compatible 同语义，但接受外部传入的版本号。
+        复用同一份 pyproject 解析，避免逻辑分叉。"""
+        pyproject = os.path.join(self._td_dir(), "pyproject.toml")
+        if not os.path.isfile(pyproject):
+            return True, ""
+        try:
+            with open(pyproject, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            m = re.search(r'python\s*=\s*"([^"]+)"', text)
+            if not m:
+                return True, ""
+            spec = m.group(1)
+            for cond in spec.split(","):
+                cond = cond.strip()
+                if not cond:
+                    continue
+                if cond.startswith("~="):
+                    ver_str = cond[2:]
+                    parts = [x for x in ver_str.split(".") if x.isdigit()]
+                    if len(parts) >= 2:
+                        lower = tuple(int(x) for x in parts[:2])
+                        upper_minor = lower[1] + 1
+                        if (major, minor) < lower or (major, minor) >= (lower[0], upper_minor):
+                            return False, spec
+                    continue
+                if cond.startswith(">="):
+                    req = tuple(int(x) for x in cond[2:].split(".") if x.isdigit())
+                    if (major, minor) < req[:2]:
+                        return False, spec
+                    continue
+                if cond.startswith("<"):
+                    req = tuple(int(x) for x in cond[1:].split(".") if x.isdigit())
+                    if (major, minor) >= req[:2]:
+                        return False, spec
+                    continue
+            return True, spec
+        except Exception:
+            return True, ""
 
     def _python_compatible(self):
         """检查当前 Python 版本是否满足 ToolDelta pyproject.toml 中的 python 要求。
@@ -319,16 +500,46 @@ class DependencyService:
                 self._mirror_name = "—"
             self._emit_progress(force=True)
             return
-        # Python 版本不兼容时直接放行，避免在不可能成功的安装上无限耗时。
+        # Python 版本不兼容时：尝试找一个兼容解释器（3.10/3.11/3.12），
+        # 用它来检测/安装依赖；找不到才标 failed 让 UI 给出明确错误。
+        # 修复点：原逻辑直接置 ready=true 让 start() 放行，但子进程依赖确实没装，
+        # 表现为「点启动→未连接」，与用户期望严重背离。
         compat, spec = self._python_compatible()
         if not compat:
+            alt = self._resolve_compatible_python()
+            if not alt:
+                with self._lock:
+                    self._status = "failed"
+                    self._progress = 100
+                    self._stage = (
+                        f"当前 Python {sys.version_info.major}.{sys.version_info.minor} "
+                        f"不满足 ToolDelta 要求 ({spec})，且未找到 3.10/3.11/3.12 解释器。"
+                        f"请安装兼容版本后再启动。"
+                    )
+                    self._error = self._stage
+                    self._mirror_name = "—"
+                self._emit_progress(force=True)
+                return
+            # 找到兼容解释器：用它做依赖检测，并把 _resolved_python 暴露给
+            # tooldelta_manager._spawn() 用于真正拉起子进程。
+            self._resolved_python = alt
+            if self._deps_present(python_bin=alt):
+                with self._lock:
+                    self._status = "ready"
+                    self._progress = 100
+                    self._stage = (
+                        f"依赖已就绪（使用 {alt} 运行 ToolDelta）"
+                    )
+                    self._mirror_name = "—"
+                self._emit_progress(force=True)
+                return
+            # 兼容解释器存在但依赖缺失：保持 idle，等用户在前端选择安装方式
             with self._lock:
-                self._status = "ready"
-                self._progress = 100
-                self._stage = (
-                    f"当前 Python {sys.version_info.major}.{sys.version_info.minor} "
-                    f"不满足 ToolDelta 要求 ({spec})，跳过依赖安装"
-                )
+                if self._status not in ("ready", "installing"):
+                    self._status = "idle"
+                    self._stage = (
+                        f"当前 Python 不兼容，已找到 {alt}。请选择依赖安装方式（本地 / 网络）"
+                    )
                 self._mirror_name = "—"
             self._emit_progress(force=True)
             return
@@ -418,6 +629,23 @@ class DependencyService:
         here = os.path.dirname(os.path.abspath(__file__))  # .../app
         return os.path.join(os.path.dirname(here), "wheels")
 
+    def _get_pip_python(self):
+        """返回应执行 pip 的 Python 解释器。
+
+        - 当前 Python 兼容 ToolDelta：返回 sys.executable
+        - 不兼容但已找到 3.10/3.11/3.12：返回该解释器路径
+          （必须用它装 pip 才能让依赖落到子进程 site-packages，避免装错环境）
+        """
+        if self._resolved_python:
+            return self._resolved_python
+        compat, _ = self._python_compatible()
+        if not compat:
+            alt = self._resolve_compatible_python()
+            if alt:
+                self._resolved_python = alt
+                return alt
+        return sys.executable
+
     def _run_pip(self, cmd, cwd):
         """执行 pip 子进程，实时收集日志与进度，返回进程退出码。不设置终态。"""
         try:
@@ -463,6 +691,12 @@ class DependencyService:
             self._append_log("ℹ wheels 目录为空，跳过离线安装，转联网。")
             return False
 
+        # 选定目标 Python：若当前不兼容则用 _resolved_python 装，确保依赖落到子进程环境
+        pip_python = self._get_pip_python()
+        if pip_python != sys.executable:
+            self._append_log(f"ℹ 当前 Python {sys.version_info.major}.{sys.version_info.minor} "
+                             f"不兼容，改用 {pip_python} 安装依赖。")
+
         self._stage = "正在从本地离线包安装依赖…"
         self._progress = 6
         self._mirror_name = "本地离线包"
@@ -471,18 +705,20 @@ class DependencyService:
         self._emit_progress(force=True)
 
         cmd = [
-            sys.executable, "-m", "pip", "install",
+            pip_python, "-m", "pip", "install",
             "--no-index", "--find-links", wheels,
             "-r", req, "--upgrade", "--no-input", "--root-user-action", "ignore",
             "--break-system-packages",
         ]
         self._append_log("▶ 执行：" + " ".join(cmd))
         rc = self._run_pip(cmd, td_dir)
-        if rc == 0 and self._deps_present():
+        # 校验依赖是否齐：用 pip_python 的环境做检测，而非当前进程
+        if rc == 0 and self._deps_present(python_bin=pip_python):
             self._status = "ready"
             self._progress = 100
             self._stage = "依赖安装完成（本地离线），可启动 ToolDelta"
             self._append_log("✔ 依赖已从本地离线包安装完成。")
+            self._resolved_python = pip_python
             self._emit_progress(force=True)
             self._done_event.set()
             return True
@@ -494,6 +730,10 @@ class DependencyService:
 
     def _online_install(self, td_dir):
         """联网兜底：测速选最快镜像源后 pip install -e .。"""
+        pip_python = self._get_pip_python()
+        if pip_python != sys.executable:
+            self._append_log(f"ℹ 当前 Python {sys.version_info.major}.{sys.version_info.minor} "
+                             f"不兼容，改用 {pip_python} 安装依赖。")
         self._stage = "正在测速选择最快镜像源…"
         self._progress = 8
         self._mirror = ""
@@ -508,7 +748,7 @@ class DependencyService:
         self._emit_progress(force=True)
 
         cmd = [
-            sys.executable, "-m", "pip", "install", "-e", ".", "--upgrade",
+            pip_python, "-m", "pip", "install", "-e", ".", "--upgrade",
             "--no-input", "--root-user-action", "ignore",
             "--break-system-packages",
             "-i", best_url, "--extra-index-url", "https://pypi.org/simple",
@@ -520,6 +760,7 @@ class DependencyService:
             self._progress = 100
             self._stage = "依赖安装完成，可启动 ToolDelta"
             self._append_log("✔ 依赖安装完成。")
+            self._resolved_python = pip_python
             self._emit_progress(force=True)
             self._done_event.set()
         else:
@@ -528,15 +769,24 @@ class DependencyService:
 
     def _run_install(self, mode=None):
         td_dir = self._td_dir()
-        # 若 Python 版本不满足 ToolDelta 要求，直接失败并给出明确提示，
-        # 避免在不可能成功的安装流程上浪费数分钟甚至挂死。
+        # Python 版本不兼容：若找到兼容解释器则继续，否则明确失败。
+        # 修复点：原逻辑直接 fail，但忽略了系统可能装了 3.10/3.11/3.12 的情况，
+        # 导致用户即使有兼容解释器也无法启动。
         compat, spec = self._python_compatible()
         if not compat:
-            self._fail_install(
-                f"当前 Python {sys.version_info.major}.{sys.version_info.minor} 不满足 "
-                f"ToolDelta 要求 ({spec})，无法安装运行依赖，请切换 Python 版本后重试。"
+            alt = self._resolve_compatible_python()
+            if not alt:
+                self._fail_install(
+                    f"当前 Python {sys.version_info.major}.{sys.version_info.minor} 不满足 "
+                    f"ToolDelta 要求 ({spec})，且未找到 3.10/3.11/3.12 解释器。"
+                    f"请安装兼容版本后再启动。"
+                )
+                return
+            self._resolved_python = alt
+            self._append_log(
+                f"ℹ 当前 Python {sys.version_info.major}.{sys.version_info.minor} 不兼容 ({spec})，"
+                f"改用 {alt} 安装依赖。"
             )
-            return
         self._append_log("▶ 开始检测并安装 ToolDelta 运行依赖…")
         if mode == "local":
             self._append_log("▶ 安装方式：本地离线（随附 wheels/，可能非最新版本）")
