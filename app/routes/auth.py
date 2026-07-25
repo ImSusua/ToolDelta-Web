@@ -66,6 +66,7 @@ def setup():
     session["username"] = username
     session["role"] = 10
     session["auth_at"] = time.time()
+    session["session_version"] = 1   # 与 setup_user 写入的初始 session_version 一致
     session.permanent = True
     audit("初始化面板", f"用户={username}")
     data = {}
@@ -98,6 +99,9 @@ def login():
         session["username"] = username
         session["role"] = user.get("role", 1)
         session["auth_at"] = time.time()
+        # 记录当前 session_version：管理员后续改密 / 删用户会递增该值，
+        # before_request 校验发现不一致即清空 session 强制重登，避免旧 session 长期可用
+        session["session_version"] = user.get("session_version", 1)
         session.permanent = True
         audit("登录", f"用户={username}")
         return ok()

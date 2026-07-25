@@ -204,6 +204,13 @@ class BackupService:
             rollback_err = None
             try:
                 abs_td_dir = os.path.abspath(td_dir)
+                # 回滚前必须先清空 _BACKUP_FOLDERS 中对应的目录：
+                # 否则恢复过程中已部分写入的新文件/目录会与快照中的旧文件混合，
+                # 形成"旧快照 + 部分新文件"的脏数据，ToolDelta 启动后行为不可预期
+                for folder in self._BACKUP_FOLDERS:
+                    dst = os.path.join(abs_td_dir, folder)
+                    if os.path.isdir(dst):
+                        shutil.rmtree(dst, ignore_errors=True)
                 with zipfile.ZipFile(snapshot_path, "r") as z:
                     # 回滚解压同样需要 zip slip 防护，避免快照被篡改后越权写文件
                     for member in z.namelist():

@@ -18,7 +18,9 @@ MAX_PLUGIN_UPLOAD_SIZE = 50 * 1024 * 1024
 
 
 def _is_safe_url(url):
-    """基础 SSRF 校验：仅允许 http/https，禁止内网地址与过长 URL。"""
+    """基础 SSRF 校验：仅允许 http/https，禁止内网/回环/链路本地/保留/组播地址与过长 URL。
+    拦截范围与 plugin_service.install_network_plugin 保持一致，避免两处校验逻辑分叉导致
+    market_connect 能探测 127.0.0.1 / 169.254.169.254 等地址而 install_network 不能。"""
     if not isinstance(url, str) or len(url) > 2048:
         return False
     try:
@@ -30,8 +32,14 @@ def _is_safe_url(url):
             return False
         addrinfo = socket.getaddrinfo(host, None)
         for info in addrinfo:
-            ip = info[4][0]
-            if ip_address(ip).is_private:
+            ip = ip_address(info[4][0])
+            # is_private 仅覆盖 10/172.16-31/192.168，必须额外拦截：
+            # - is_loopback: 127.0.0.0/8（可探测本机服务）
+            # - is_link_local: 169.254.0.0/16（云元数据 169.254.169.254）
+            # - is_reserved: 0.0.0.0/8、240.0.0.0/4 等
+            # - is_multicast: 224.0.0.0/4
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast):
                 return False
     except Exception:
         return False
@@ -308,7 +316,12 @@ def market_connect():
         return jsonify({"success": False, "error": "URL 不合法或不允许访问该地址"})
     try:
         import requests
-        r = requests.get(f"{url}/market_tree.json", timeout=10)
+        # allow_redirects=False：禁止自动跟随 3xx 跳转。
+        # _is_safe_url 只校验了原始 host，若放行跳转，恶意市场源可用
+        # 302 → http://169.254.169.254/... 把请求导向云元数据等内网资源，绕过 SSRF 拦截（P1-5）
+        r = requests.get(f"{url}/market_tree.json", timeout=10, allow_redirects=False)
+        if r.is_redirect or r.is_permanent_redirect:
+            return jsonify({"success": False, "error": "市场源返回重定向，疑似不安全"})
         r.raise_for_status()
         tree = r.json()
         plugins_list = []
@@ -495,6 +508,25 @@ def delete_backup():
 def reset_to_factory():
     if session.get("role") != 10:
         return jsonify({"success": False, "error": "无权限"})
+    # 恢复出厂会清空所有插件/配置/数据，破坏力远大于"重置面板"(仅清账号)，
+    # 后者已要求密码二次确认 + audit；这里对齐：必须验证管理员密码并记录审计
+    # 防止管理员 session 被钓鱼/CSRF 拿到后一键清空所有数据
+    from flask import request as _req
+    from app import auth_service
+    data = _req.get_json(silent=True) or {}
+    password = data.get("password") or ""
+    if not password:
+        return jsonify({"success": False, "error": "请输入管理员密码以确认"})
+    # 复用 /api/reset-panel 的限流逻辑（基于 IP），避免暴力尝试
+    ip = _req.remote_addr or "?"
+    allowed, msg = auth_service.check_login_rate(ip)
+    if not allowed:
+        return jsonify({"success": False, "error": msg})
+    if not auth_service.verify_password(password):
+        auth_service.record_login_fail(ip)
+        return jsonify({"success": False, "error": "密码错误"})
+    auth_service.clear_login_fails(ip)
+    audit("恢复出厂设置", f"操作者={session.get('username','?')}")
     ok, msg = backup_service.reset_to_factory()
     if ok:
         return jsonify({"success": True, "message": msg})

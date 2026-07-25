@@ -96,6 +96,11 @@ def _is_real_path(path):
 
 @bp.route("/list")
 def list_files():
+    # 文件列表会暴露 fbtoken、配置文件名等敏感目录结构，与同 blueprint 的
+    # read/download/search 一致要求管理员（之前遗漏导致普通用户可枚举目录树）
+    err = _admin_required()
+    if err:
+        return err
     raw = request.args.get("path", "")
     full = safe_path(raw)
     if not full:
@@ -364,6 +369,10 @@ def download_dir():
     full = safe_path(raw)
     if not full or not os.path.isdir(full):
         return fail("目录不存在")
+    # 禁止打包根目录：根目录含 fbtoken、所有插件配置与数据文件，
+    # 一次性下载会泄露所有敏感凭据（与 delete_item 对根目录的拦截一致）
+    if full == ALLOWED_ROOT:
+        return fail("不能打包根目录")
     if not _is_real_path(full):
         return fail("目录包含越权符号链接")
     # 单次遍历完成统计 + 打包，避免大目录被扫描两次（P2-8）

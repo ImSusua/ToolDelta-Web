@@ -424,6 +424,9 @@ function _clearInert() {
 document.addEventListener('click', function(e) {
     if (e.target.classList && e.target.classList.contains('modal-overlay')) {
         e.target.classList.remove('active');
+        // 必须清理 inert 标记，否则弹窗视觉消失但 body 子元素仍带 inert，
+        // 整个页面无法交互/聚焦，必须刷新才恢复
+        _clearInert();
         if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
     }
 });
@@ -438,7 +441,12 @@ document.addEventListener('keydown', function(e) {
             // 确认弹窗走专用回调
             if (top.id === 'confirmModal') { closeConfirm(false); }
             else if (top.id === 'promptModal') { closePrompt(false); }
-            else { top.classList.remove('active'); if (_lastFocus && _lastFocus.focus) _lastFocus.focus(); }
+            else {
+                top.classList.remove('active');
+                // 同步清理 inert，避免页面冻结（_closeModal 已清理，这里走兜底路径也要清理）
+                _clearInert();
+                if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+            }
             e.preventDefault();
         }
         // 没有弹窗时，移动端关闭侧边栏

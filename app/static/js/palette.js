@@ -258,8 +258,12 @@ window.TD_PALETTE = (function () {
                 var sel = (flatIdx === selectedIdx) ? 'true' : 'false';
                 var label = _highlight(c.label, q);
                 var hint = c.hint ? '<span class="palette-hint">' + esc(c.hint) + '</span>' : '';
+                // ico 可能是 SVG 字符串（来自 icons.js tdIcon），也可能是 emoji 文本
+                // SVG 不能再转义，否则会变成 &lt;svg&gt;... 的可见文本；emoji 不含 HTML 特殊字符，转义与否都一样
+                var icoRaw = c.ico || '🔗';
+                var icoHtml = icoRaw.indexOf('<svg') === 0 ? icoRaw : esc(icoRaw);
                 html += '<div class="palette-item" id="palette-item-' + flatIdx + '" role="option" aria-selected="' + sel + '" data-idx="' + flatIdx + '">' +
-                    '<span class="palette-ico" aria-hidden="true">' + esc(c.ico || '🔗') + '</span>' +
+                    '<span class="palette-ico" aria-hidden="true">' + icoHtml + '</span>' +
                     '<span class="palette-label">' + label + '</span>' + hint + '</div>';
                 flatIdx++;
             });
@@ -350,11 +354,20 @@ window.TD_PALETTE = (function () {
                     _render();
                 }, 50);
             });
-            // 只阻止字母输入冒泡，允许 Cmd+K / Esc 冒泡到 _onKeydown
+            // 只阻止会触发全局快捷键的字符冒泡（g/Slash/?），允许方向键/Enter/Home/End
+            // 冒泡到 _onKeydown 处理器；之前的代码无脑 stopPropagation 导致键盘导航完全失效
             inputEl.addEventListener('keydown', function (e) {
-                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) return;
-                if (e.key === 'Escape') return;
-                e.stopPropagation();
+                // 修饰键组合（Cmd+K、Ctrl+K）一律放行
+                if (e.metaKey || e.ctrlKey || e.altKey) return;
+                // 导航键全部放行，由 _onKeydown 处理
+                var navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                               'Enter', 'Home', 'End', 'PageUp', 'PageDown', 'Escape', 'Tab', 'Backspace'];
+                if (navKeys.indexOf(e.key) !== -1) return;
+                // 只对会触发全局 g-prefix / 单字符快捷键的可见字符做 stopPropagation
+                var ch = e.key.length === 1 ? e.key : '';
+                if (ch && /[a-zA-Z/?]/.test(ch)) {
+                    e.stopPropagation();
+                }
             });
             inputEl._tdBound = true;
         }

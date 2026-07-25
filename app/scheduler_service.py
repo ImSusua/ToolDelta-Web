@@ -308,16 +308,26 @@ class SchedulerService:
                 self._run_job(job, now)
 
     def _run_job(self, job, now):
+        # send_command 内部会写子进程 stdin，ToolDelta 阻塞读 stdin 时管道写满会阻塞 write()；
+        # 不能在 self._lock 内调用，否则会卡住 list_jobs/add_job/delete_job 以及 dashboard 轮询
+        # 导致整个面板无响应。改为：锁外调用 send_command，成功后再持锁更新 last_run/run_count
+        cmd = job.get("command", "")
+        ok = False
+        send_err = None
+        try:
+            ok = tooldelta_manager.send_command(cmd)
+        except Exception as e:
+            send_err = e
         with self._lock:
             try:
-                # 检查 send_command 返回值:进程未运行/写入失败时返回 False
-                # 仅成功才更新 last_run/run_count,避免"假成功"误导用户
-                ok = tooldelta_manager.send_command(job["command"])
                 if not ok:
-                    job["last_error"] = now.strftime(_FMT) + " 进程未运行或命令发送失败"
+                    err_reason = "进程未运行或命令发送失败"
+                    if send_err is not None:
+                        err_reason = str(send_err)
+                    job["last_error"] = now.strftime(_FMT) + " " + err_reason
                     try:
                         log_service.warn(
-                            f"定时任务未执行(进程未运行或发送失败): {job['name']}", "SCHEDULER"
+                            f"定时任务未执行({err_reason}): {job['name']}", "SCHEDULER"
                         )
                     except Exception:
                         pass
@@ -326,7 +336,7 @@ class SchedulerService:
                 job["run_count"] = job.get("run_count", 0) + 1
                 try:
                     log_service.info(
-                        f"定时任务执行: {job['name']} -> {job['command']}", "SCHEDULER"
+                        f"定时任务执行: {job['name']} -> {cmd}", "SCHEDULER"
                     )
                 except Exception:
                     pass

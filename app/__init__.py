@@ -130,6 +130,23 @@ def create_app():
             return
         if not session.get("authenticated"):
             return redirect("/login")
+        # session_version 校验：用户被删除 / 改密 / 管理员重置密码后，其 user.session_version
+        # 已递增；session 中存的旧版本号失效，强制清空 session 重新登录，避免攻击者窃取的
+        # 旧 session 在 30 天 PERMANENT_SESSION_LIFETIME 内继续可用
+        ses_user = session.get("username", "")
+        ses_ver = session.get("session_version")
+        if ses_user and ses_ver is not None:
+            cur_ver = auth_svc.get_user_session_version(ses_user)
+            # 用户被删除返回 None，或版本号不一致 → 立即失效
+            if cur_ver is None or cur_ver != ses_ver:
+                session.clear()
+                return redirect("/login")
+        else:
+            # 旧 session（迁移期）无 session_version，补一次校验
+            cur_ver = auth_svc.get_user_session_version(ses_user) if ses_user else None
+            if ses_user and cur_ver is None:
+                session.clear()
+                return redirect("/login")
 
     @app.context_processor
     def inject_wallpaper():
@@ -176,5 +193,35 @@ def create_app():
     # 避免线程静默消亡后无任何线索可查（P1-5）
     threading.excepthook = _thread_excepthook
     sys.excepthook = _sys_excepthook
+
+    # ─── 全局错误处理：API 路径返回 JSON 而非 HTML ───
+    # 之前路由抛异常会冒到 Flask 默认 500 HTML 页面，前端 fetch 的 r.json() 解析失败
+    # 走 catch 分支后丢失服务器错误信息；这里对 /api/ 路径统一返回 JSON 结构
+    from flask import jsonify as _jsonify, request as _req
+    from app.log_service import log_service as _log
+
+    @app.errorhandler(Exception)
+    def _handle_exception(e):
+        try:
+            _log.error(f"未捕获异常: {type(e).__name__}: {e}", "APP")
+        except Exception:
+            pass
+        if _req.path.startswith("/api/"):
+            return _jsonify({"success": False, "error": "服务器内部错误，请查看日志"}), 500
+        # 非 API 路径走 Flask 默认 HTML 错误页（让浏览器用户看到友好页面）
+        from flask import abort as _abort
+        _abort(500)
+
+    @app.errorhandler(404)
+    def _handle_404(e):
+        if _req.path.startswith("/api/"):
+            return _jsonify({"success": False, "error": "接口不存在"}), 404
+        return _abort(404)
+
+    @app.errorhandler(403)
+    def _handle_403(e):
+        if _req.path.startswith("/api/"):
+            return _jsonify({"success": False, "error": "无权限"}), 403
+        return _abort(403)
 
     return app

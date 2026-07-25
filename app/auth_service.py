@@ -136,7 +136,8 @@ def setup_user(username, password, role=10):
             "password_hash": generate_password_hash(password),
             "role": role,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "login_at": ""
+            "login_at": "",
+            "session_version": 1   # 用于失效既有 session：登录时存入 session，before_request 校验
         })
         _write_locked(users)
     return True, ""
@@ -157,7 +158,8 @@ def create_user(username, password, role=1):
             "password_hash": generate_password_hash(password),
             "role": role,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "login_at": ""
+            "login_at": "",
+            "session_version": 1
         })
         _write_locked(users)
     return True, ""
@@ -182,6 +184,9 @@ def change_password(username, old_password, new_password):
             if not check_password_hash(target.get("password_hash", ""), old_password):
                 return False, "旧密码错误"
         target["password_hash"] = generate_password_hash(new_password)
+        # 递增 session_version：旧 session 中存的版本号失效，before_request 强制踢出
+        # 让被改密用户的既有会话立刻失效，避免攻击者窃取的旧 session 在 30 天有效期内继续可用
+        target["session_version"] = target.get("session_version", 1) + 1
         _write_locked(users)
     return True, ""
 
@@ -195,10 +200,23 @@ def admin_reset_password(username, new_password):
         for u in users:
             if u.get("username") == username:
                 u["password_hash"] = generate_password_hash(new_password)
+                # 递增 session_version：管理员重置密码后该用户的所有既有 session 立即失效
+                u["session_version"] = u.get("session_version", 1) + 1
                 found = True
         if found:
             _write_locked(users)
         return found, "" if found else "用户不存在"
+
+def get_user_session_version(username):
+    """读取用户当前的 session_version。用户不存在或字段缺失时返回 None。
+    before_request 用此函数校验 session 中的版本号是否过期。"""
+    if not username:
+        return None
+    users = _read()
+    for u in users:
+        if u.get("username") == username:
+            return u.get("session_version", 1)
+    return None
 
 def reset_panel():
     if USER_FILE and os.path.isfile(USER_FILE):

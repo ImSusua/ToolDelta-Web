@@ -115,3 +115,40 @@ def api_default():
     if not ok:
         return _fail("连接不存在")
     return _ok()
+
+
+@bp.route("/api/connections/test", methods=["POST"])
+def api_test():
+    """测试 MC 服务器网络连通性。setup 引导第 3 步与 connections 页都用此端点。
+    仅做 TCP 套接字探测（connect 5s 超时），不发送任何协议握手数据。"""
+    err = _admin_required()
+    if err:
+        return err
+    import socket
+    data = request.get_json(silent=True) or {}
+    host = (data.get("host") or "").strip()
+    port = data.get("port")
+    if not host:
+        return _fail("地址不能为空")
+    try:
+        port = int(port or 0)
+    except (TypeError, ValueError):
+        return _fail("端口必须为数字")
+    if not (1 <= port <= 65535):
+        return _fail("端口必须在 1-65535 范围内")
+    # 限制 hostname 长度，防止超长输入
+    if len(host) > 255:
+        return _fail("地址过长")
+    try:
+        # getaddrinfo 会解析 IPv4/IPv6/主机名；超时 5s
+        sock = socket.create_connection((host, port), timeout=5)
+        sock.close()
+        return _ok({"latency_ms": 0, "reachable": True})
+    except socket.timeout:
+        return _fail(f"连接超时（5s）: {host}:{port}")
+    except ConnectionRefusedError:
+        return _fail(f"连接被拒绝: {host}:{port}（服务器未启动或端口错误）")
+    except socket.gaierror as e:
+        return _fail(f"地址解析失败: {host}（{e.strerror or 'unknown host'}）")
+    except OSError as e:
+        return _fail(f"连接失败: {host}:{port}（{e.strerror or str(e)}）")

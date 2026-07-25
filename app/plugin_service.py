@@ -116,10 +116,12 @@ class PluginService:
     def upload_plugin(self, zip_file, name=None):
         pdir = self.get_classic_plugin_path()
         os.makedirs(pdir, exist_ok=True)
-        temp_dir = os.path.join(pdir, "__upload_temp__")
-        if os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir, exist_ok=True)
+        # 用 tempfile.mkdtemp 而非固定目录名 "__upload_temp__"：
+        # 固定目录在并发上传时会互相覆盖——A 还在解压时 B 的 shutil.rmtree 会删掉
+        # A 的中间产物，或 A 的 finally 把 B 刚写入的目录清空，导致插件损坏或上传失败。
+        # mkdtemp 每次生成唯一目录名（随机后缀），并发互不干扰。
+        # 放在 pdir 下而非系统 /tmp：保证与 target 同文件系统，shutil.move 走快速 rename。
+        temp_dir = tempfile.mkdtemp(prefix="__upload_", dir=pdir)
         try:
             with zipfile.ZipFile(zip_file, "r") as z:
                 # 先校验 zip 包内文件：禁止绝对路径、路径遍历、过大总大小与文件数
@@ -183,8 +185,8 @@ class PluginService:
                 shutil.move(plugin_root, target)
             return True
         finally:
-            if os.path.isdir(temp_dir):
-                shutil.rmtree(temp_dir)
+            # 无论成功失败都清理临时目录；mkdtemp 目录名唯一，不会误删其他并发上传的目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def get_plugin_readme(self, name):
         if self._safe_name(name) is None:
@@ -347,13 +349,23 @@ class PluginService:
                     continue
                 if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
                     return False, "不允许访问内网或本地地址"
-            pmap = requests.get(f"{base}/plugin_ids_map.json", timeout=10).json()
+            # allow_redirects=False：禁止自动跟随 3xx 跳转。
+            # SSRF 校验只对原始 host 做了内网地址拦截，若放行跳转，恶意市场源可
+            # 用 302 → http://169.254.169.254/... 把请求导向云元数据等内网资源，
+            # 绕过上面的 is_private 拦截。遇到 3xx 直接判定为不安全（P1-5）
+            resp_map = requests.get(f"{base}/plugin_ids_map.json", timeout=10, allow_redirects=False)
+            if resp_map.is_redirect or resp_map.is_permanent_redirect:
+                return False, "市场源返回重定向，疑似不安全"
+            pmap = resp_map.json()
             if plugin_id not in pmap:
                 return False, "插件 ID 不在该市场源中"
             plugin_name = secure_filename(pmap[plugin_id])
             if not plugin_name:
                 return False, "插件名不合法"
-            tree = requests.get(f"{base}/directory_tree.json", timeout=10).json()
+            resp_tree = requests.get(f"{base}/directory_tree.json", timeout=10, allow_redirects=False)
+            if resp_tree.is_redirect or resp_tree.is_permanent_redirect:
+                return False, "市场源返回重定向，疑似不安全"
+            tree = resp_tree.json()
             ftree = tree.get(plugin_name)
             if not ftree:
                 return False, "无法获取插件文件列表"
@@ -380,7 +392,10 @@ class PluginService:
                     continue
                 os.makedirs(os.path.dirname(local), exist_ok=True)
                 # 流式下载 + 分块校验，避免大文件一次性载入内存（P2-2）
-                with requests.get(url, timeout=30, stream=True) as resp:
+                # allow_redirects=False 同上：禁止 3xx 跳转绕过 SSRF 拦截（P1-5）
+                with requests.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
+                    if resp.is_redirect or resp.is_permanent_redirect:
+                        return False, f"下载 {filepath} 时市场源返回重定向，疑似不安全"
                     resp.raise_for_status()
                     try:
                         cl = int(resp.headers.get("content-length", 0))
