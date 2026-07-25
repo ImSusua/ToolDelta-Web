@@ -1,6 +1,6 @@
 :root {
-  --sidebar-width: 180px;
-  /* color-scheme：让浏览器原生控件（select option 列表、滚动条、date picker）
+  /* 注：--sidebar-width 默认 212px（line ~1389 处 UI v3 升级后定义，此处不再重复）
+     color-scheme：让浏览器原生控件（select option 列表、滚动条、date picker）
      跟随深色主题，避免白底刺眼。 */
   color-scheme: dark;
 
@@ -33,6 +33,7 @@
   --r-md: 8px;
   --r-lg: 12px;
   --r-xl: 16px;
+  --r-full: 999px; /* 胶囊形：tag / badge / progress / pill */
 
   /* 控制台专用配色：服务器下发的 ANSI 调色板面向深色背景设计（含黑/灰/白前景），
      故控制台在深、浅主题下均保持深色，切换主题不会出现配色错乱或文字不可读 */
@@ -366,7 +367,9 @@ pre { white-space: pre-wrap; word-break: break-all; }
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all 0.12s;
+  transition: transform var(--duration-fast), background var(--duration-fast),
+              color var(--duration-fast), border-color var(--duration-fast),
+              box-shadow var(--duration-fast), opacity var(--duration-fast);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -375,7 +378,8 @@ pre { white-space: pre-wrap; word-break: break-all; }
 }
 /* <a> 渲染为按钮时，继承颜色 */
 a.btn { color: inherit; }
-.btn-primary { background: var(--primary); color: #fff; }
+/* .btn-primary background 由 UI v3 渐变统一定义（var(--grad-primary)），此处仅保留 color */
+.btn-primary { color: #fff; }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn-success { background: var(--success); color: #fff; }
 .btn-success:hover { opacity: 0.9; }
@@ -459,7 +463,7 @@ tr:hover td { background: var(--surface-2); }
   color: var(--ink-subtle);
   cursor: pointer; font-size: 13px;
   border-bottom: 2px solid transparent;
-  transition: all 0.12s;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
   font-weight: 500;
 }
 .tab-btn:hover { color: var(--ink); }
@@ -475,7 +479,7 @@ tr:hover td { background: var(--surface-2); }
   background: rgba(0,0,0,0.7);
   z-index: 999;
   justify-content: center; align-items: center;
-  backdrop-filter: blur(2px);
+  /* backdrop-filter 见 UI v3 升级处统一定义（blur 8px） */
 }
 .modal-overlay.active { display: flex; }
 .modal {
@@ -540,7 +544,7 @@ tr:hover td { background: var(--surface-2); }
   border: 1px solid var(--hairline);
   border-radius: var(--r-lg);
   padding: 20px;
-  transition: all 0.15s;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
   /* CSS containment：隔离卡片重排，长列表滚动时提升性能（参考 web.dev 最佳实践） */
   contain: layout style paint;
 }
@@ -555,7 +559,7 @@ tr:hover td { background: var(--surface-2); }
 .tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: var(--r-full, 12px);
+  border-radius: var(--r-full);
   font-size: 11px;
   font-weight: 500;
 }
@@ -605,7 +609,7 @@ tr:hover td { background: var(--surface-2); }
 .toast.error { border-left: 3px solid var(--danger); }
 .toast.info { border-left: 3px solid var(--primary); }
 .toast.warning { border-left: 3px solid var(--warning); }
-.toast.warning::before { content: '⚠'; color: var(--warning); }
+/* .toast::before 图标统一定义在 UI v3 升级处，此处不再重复 */
 .toast {
   position: relative; overflow: hidden; cursor: pointer;
   min-width: 240px; max-width: 360px;
@@ -755,6 +759,17 @@ th[role="button"]:focus-visible {
   gap: 8px;
 }
 .offline-banner.visible { opacity: 1; transform: translateY(0); }
+/* 离线横幅图标（SVG，继承 #000 文字色） */
+.offline-ico {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  color: inherit;
+  flex-shrink: 0;
+}
+.offline-ico svg {
+  width: 16px; height: 16px;
+  display: block;
+}
 /* 错误变体：图标用危险色，提示更醒目（参考 Primer error variation） */
 .empty-state-error .icon { opacity: 0.7; color: var(--danger); }
 .empty-title {
@@ -808,19 +823,16 @@ th[role="button"]:focus-visible {
 /* 可访问性：spinner 自动获得 role/aria，loading-text 自动 aria-live */
 .spinner[role="status"]::before { content: ''; } /* 占位，实际通过 JS 设属性 */
 
-/* ─── Scrollbar ─── */
-
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ink-tertiary); }
+/* ─── Scrollbar ───
+   统一定义见下方 UI v3 升级处（width: 10px / border-radius: 999px / border + background-clip）。
+   此处保留位置注释，避免视觉跳变。 */
 
 /* ─── Badge ─── */
 
 .badge {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--r-full);
   font-size: 11px;
   font-weight: 500;
 }
@@ -936,9 +948,9 @@ hr {
   .sidebar nav a .nav-label,
   .sidebar nav a span:not(.nav-ico),
   .sidebar-footer .user-name { display: none; }
-  /* 主题按钮仅保留 emoji，隐藏文字 */
-  .sidebar-footer .theme-toggle { font-size: 0; padding: 8px; }
-  .sidebar-footer .theme-toggle::first-letter { font-size: 16px; }
+  /* 主题按钮仅保留图标（SVG），隐藏文字 */
+  .sidebar-footer .theme-toggle { padding: 8px; }
+  .sidebar-footer .theme-toggle .theme-label { display: none; }
   .sidebar .brand { padding: 14px 8px; justify-content: center; }
   .sidebar nav a { padding: 12px 8px; justify-content: center; }
   .sidebar .nav-ico { margin-right: 0; }
@@ -1004,8 +1016,7 @@ button, a, input, select, textarea, .toast, .plugin-card, .stat-card,
   .table th, .table td { white-space: nowrap; }
 }
 
-/* 6. 选中文本颜色：避免安卓默认蓝色突兀 */
-::selection { background: rgba(94,106,210,0.3); }
+/* 6. 选中文本颜色：避免安卓默认蓝色突兀（统一定义见下方 ::selection，此处不重复） */
 
 /* 7. 禁用长按菜单（避免移动端长按图片/链接弹出系统菜单） */
 img, a, .nav-ico { -webkit-touch-callout: none; }
@@ -1131,20 +1142,8 @@ body.kbd-open .modal .modal-actions {
 
 /* ─── UI 升级：参考 easynode 设计语言 ─── */
 
-/* 金色渐变 logo 与品牌名（参照 easynode 金色 #ffc021 → #e4d1a1） */
-.sidebar .brand .logo {
-  background: linear-gradient(135deg, #ffc021, #e4d1a1);
-  color: #1a1408;
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(255, 192, 33, 0.35);
-}
-.brand-name {
-  background: linear-gradient(135deg, #ffc021, #e4d1a1);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-weight: 700;
-}
+/* 注：金色渐变 logo 已统一为 UI v3 主色渐变（var(--grad-primary)），见下方统一定义，
+   此处不再重复，避免与主色定义冲突。 */
 
 /* 侧边栏底部：主题切换 + 用户卡片 */
 .sidebar-footer {
@@ -1182,9 +1181,7 @@ body.kbd-open .modal .modal-actions {
 .logout-link { font-size: 12px; color: var(--ink-subtle); text-decoration: none; }
 .logout-link:hover { color: var(--danger); }
 
-/* 卡片柔和阴影：easynode 的轻量层次感 */
-.card { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
-.console-wrap { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+/* 卡片柔和阴影：已由 UI v3 升级处统一定义（box-shadow: var(--shadow-sm) 等），此处不再重复 */
 
 /* ── 多主题系统（参考 Posisteve/opaque/harryheman GitHub 最佳实践） ──
    data-theme 属性挂在 <html> 上（pre-paint script 设置），避免 body 加载延迟导致的 FOUC。
@@ -1250,13 +1247,17 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
 /* T5: 三态主题切换器 UI（深色/浅色/系统循环） */
 .theme-toggle { position: relative; }
 .theme-toggle .theme-icon {
-  display: inline-block;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  width: 16px; height: 16px;
   line-height: 1;
+  color: inherit;
 }
-.theme-toggle[data-current="dark"] .theme-icon::after { content: "🌙"; }
-.theme-toggle[data-current="light"] .theme-icon::after { content: "☀️"; }
-.theme-toggle[data-current="system"] .theme-icon::after { content: "🖥️"; }
+.theme-toggle .theme-icon svg {
+  width: 16px; height: 16px;
+  display: block;
+}
+/* 图标由 icons.js 依据 data-current 注入：dark→moon / light→sun / system→monitor */
 /* 当未设置 data-current（首次加载）时，由 JS 在 DOMContentLoaded 后补齐 */
 
 
@@ -1358,9 +1359,9 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-tertiary); background-clip: padding-box; }
 * { scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
 
-/* ─── 按钮层次提升 ─── */
-.btn { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
-.btn-primary, .btn-success, .btn-danger, .btn-warning { box-shadow: 0 2px 8px rgba(94, 106, 210, 0.25); }
+/* ─── 按钮层次提升 ───
+   注：box-shadow 由 UI v3 升级处统一定义（var(--shadow-sm) + 各色独立阴影），
+   此处不再重复，避免硬编码覆盖变量。 */
 
 /* ════════════════════════════════════════════════════════════════
    UI v3 — 设计系统升级
@@ -1437,9 +1438,13 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
   width: 18px; height: 18px;
   align-items: center; justify-content: center;
   margin-right: 10px;
-  font-size: 15px;
-  opacity: 0.78;
+  color: var(--ink-subtle);
+  flex-shrink: 0;
   transition: all 0.2s var(--ease);
+}
+.nav-ico svg {
+  width: 18px; height: 18px;
+  display: block;
 }
 .sidebar nav a {
   position: relative;
@@ -1466,13 +1471,13 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
   color: var(--ink);
   transform: translateX(2px);
 }
-.sidebar nav a:hover .nav-ico { opacity: 1; transform: scale(1.12); }
+.sidebar nav a:hover .nav-ico { color: var(--ink); transform: scale(1.12); }
 .sidebar nav a.active {
   background: linear-gradient(90deg, rgba(94, 106, 210, 0.20), rgba(94, 106, 210, 0.04));
   color: #fff;
 }
 .sidebar nav a.active::before { transform: translateY(-50%) scaleY(1); }
-.sidebar nav a.active .nav-ico { opacity: 1; }
+.sidebar nav a.active .nav-ico { color: var(--primary-hover); }
 
 /* ── 卡片：玻璃 + 悬浮抬升 ── */
 .card {
@@ -1557,8 +1562,9 @@ a.stat-card:hover::after, .stat-card.is-clickable:hover::after { opacity: 1; }
   box-shadow: 0 0 10px rgba(94, 106, 210, 0.5);
 }
 
-/* ── 表格表头吸顶 ── */
-th { position: sticky; top: 0; background: var(--surface-1); }
+/* ── 表格表头吸顶 ──
+   注：仅在 .table-wrap 内启用 sticky，避免全局 th 误影响 modal 内 / 无 wrap 表格。
+   sticky 样式见 .table-wrap thead th 定义。 */
 
 /* ── 引导向导 Stepper（onborda / foundey 风格）── */
 .onb-card {
@@ -1614,6 +1620,7 @@ th { position: sticky; top: 0; background: var(--surface-1); }
 .toast.success::before { content: '✓'; color: var(--success); }
 .toast.error::before   { content: '✕'; color: var(--danger); }
 .toast.info::before    { content: 'ℹ'; color: var(--primary-hover); }
+.toast.warning::before { content: '⚠'; color: var(--warning); }
 
 /* ── 插件卡：悬浮抬升 + 强调边 ── */
 .plugin-card:hover {
@@ -1734,7 +1741,13 @@ th { position: sticky; top: 0; background: var(--surface-1); }
 .dep-opt-ico {
   width: 38px; height: 38px; flex: none; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; background: var(--surface-3); border: 1px solid var(--hairline);
+  background: var(--surface-3); border: 1px solid var(--hairline);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.dep-opt-ico svg {
+  width: 20px; height: 20px;
+  display: block;
 }
 .dep-opt-main { flex: 1; min-width: 0; padding-right: 72px; }
 .dep-opt-title { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.2px; }
@@ -2112,6 +2125,17 @@ select[aria-invalid="true"] {
   border-color: var(--primary);
   color: var(--ink);
 }
+/* 铃铛图标（notify-toggle 内）—— SVG 适配，继承 currentColor */
+.notify-toggle .notify-ico {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  color: inherit;
+  flex-shrink: 0;
+}
+.notify-toggle .notify-ico svg {
+  width: 16px; height: 16px;
+  display: block;
+}
 .notify-toggle .notify-badge {
   position: absolute;
   top: -4px; right: -4px;
@@ -2149,7 +2173,8 @@ select[aria-invalid="true"] {
   transition: background .12s;
 }
 .notify-item:hover { background: var(--surface-2); }
-.notify-item .notify-ico { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
+.notify-item .notify-ico { font-size: 16px; line-height: 1.4; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+.notify-item .notify-ico svg { width: 16px; height: 16px; display: block; }
 .notify-item .notify-body { flex: 1; min-width: 0; }
 .notify-item .notify-msg {
   font-size: 13px; color: var(--ink);

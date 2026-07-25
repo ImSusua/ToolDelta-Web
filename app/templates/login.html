@@ -2,27 +2,58 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" id="themeColor" content="#0f1011">
     <title>登录 - ToolDelta Web</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script>
+      /* ── 主题初始化：与 base.html / setup.html 统一使用 td_theme_v2 键 + data-theme 属性 ──
+         pre-paint 在 CSS 渲染前执行，避免深色→浅色闪烁。 */
+      (function () {
+        var KEY = 'td_theme_v2';
+        var mode = 'dark';
+        try { mode = localStorage.getItem(KEY) || 'dark'; } catch (e) {}
+        // 兼容旧键 td_theme 迁移
+        if (mode === 'dark') {
+          try { var old = localStorage.getItem('td_theme'); if (old === 'light') { mode = 'light'; localStorage.setItem(KEY, 'light'); } } catch (e) {}
+        }
+        if (mode !== 'dark' && mode !== 'light' && mode !== 'system') mode = 'dark';
+        window._tdThemeMode = mode;
+        function applyTheme(m) {
+          var actual = m;
+          if (m === 'system') actual = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', actual);
+          document.documentElement.style.setProperty('color-scheme', actual);
+          var mc = document.querySelector('meta[name="theme-color"]');
+          if (mc) mc.setAttribute('content', actual === 'light' ? '#eef1f6' : '#0f1011');
+        }
+        window._tdApplyTheme = applyTheme;
+        applyTheme(mode);
+        if (window.matchMedia) {
+          window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+            try { if ((localStorage.getItem(KEY) || 'dark') === 'system') applyTheme('system'); } catch (e) {}
+          });
+        }
+      })();
+    </script>
     <style>
         .auth-page {
             display: flex; align-items: center; justify-content: center;
-            min-height: 100vh; background: var(--canvas);
+            min-height: 100vh; min-height: 100dvh; background: var(--canvas);
             position: relative; padding: 20px;
         }
         .auth-card {
             position: relative; z-index: 1;
-            /* fallback for backdrop-filter unsupported */
-            background: rgba(20, 21, 22, 0.92);
-            border: 1px solid var(--glass-brd, rgba(255,255,255,0.08));
+            /* fallback for backdrop-filter unsupported：浅色主题下用 surface-1（白） */
+            background: var(--surface-1);
+            border: 1px solid var(--hairline);
             border-radius: 20px; padding: 44px 40px; width: 100%; max-width: 390px;
             box-shadow: var(--shadow-lg, 0 24px 70px rgba(0,0,0,0.50));
             animation: authPop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.1);
         }
         @supports (backdrop-filter: blur(24px)) {
             .auth-card {
-                background: var(--glass-bg, rgba(20, 21, 22, 0.55));
+                background: var(--glass-bg);
                 backdrop-filter: blur(24px) saturate(160%);
                 -webkit-backdrop-filter: blur(24px) saturate(160%);
             }
@@ -46,8 +77,8 @@
         .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--ink); }
         .form-group .input-wrap { position: relative; }
         .form-group .input-ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 15px; opacity: 0.5; pointer-events: none; }
-        .form-group input { width: 100%; padding: 11px 12px 11px 38px; border-radius: 10px; border: 1px solid var(--border, var(--hairline)); background: rgba(0,0,0,0.25); color: var(--ink); font-size: 14px; outline: none; box-sizing: border-box; transition: border-color .18s, box-shadow .18s; }
-        .form-group input:focus { border-color: var(--accent, var(--primary)); box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.25); }
+        .form-group input { width: 100%; padding: 11px 12px 11px 38px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--surface-1); color: var(--ink); font-size: 14px; outline: none; box-sizing: border-box; transition: border-color .18s, box-shadow .18s; }
+        .form-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.25); }
         @media (max-width: 768px) {
             .form-group input { font-size: 16px; }
             .auth-card { padding: 32px 24px; max-width: 100%; }

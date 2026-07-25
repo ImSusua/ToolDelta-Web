@@ -34,9 +34,18 @@ window.TD_PALETTE = (function () {
             var txt = (a.textContent || '').trim();
             // 跳过纯空白
             if (!txt) return;
-            // 提取图标 span
+            // 提取图标：优先用 data-icon 渲染对应 SVG（icons.js 系统），fallback 到 🔗
             var icoEl = a.querySelector('.nav-ico');
-            var ico = icoEl ? icoEl.textContent.trim() : '🔗';
+            var ico = '🔗';
+            if (icoEl) {
+                var icoName = icoEl.getAttribute('data-icon');
+                if (icoName && window.tdIcon) {
+                    ico = window.tdIcon(icoName, { size: 14 });
+                } else if (icoEl.textContent.trim()) {
+                    // 兜底：emoji 或字符（旧模板）
+                    ico = icoEl.textContent.trim();
+                }
+            }
             navs.push({
                 id: 'nav_' + href,
                 label: txt,

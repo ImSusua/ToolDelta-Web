@@ -18,16 +18,16 @@
 <div id="pluginList" class="plugin-grid"></div>
 
 <!-- Add Plugin Modal -->
-<div class="modal-overlay" id="addPluginModal" role="dialog" aria-modal="true" aria-labelledby="addPluginTitle">
-    <div class="modal modal-lg">
+<div class="modal-overlay" id="addPluginModal" role="presentation">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="addPluginTitle">
         <h2 id="addPluginTitle">添加插件</h2>
-        <div class="tabs" role="tablist">
-            <button class="tab-btn active" data-tab="uploadTab" role="tab" aria-selected="true">上传插件</button>
-            <button class="tab-btn" data-tab="presetTab" role="tab" aria-selected="false">预设插件</button>
-            <button class="tab-btn" data-tab="networkTab" role="tab" aria-selected="false">网络安装</button>
+        <div class="tabs" role="tablist" aria-label="添加插件方式">
+            <button class="tab-btn active" id="tabUpload" data-tab="uploadTab" role="tab" aria-selected="true" aria-controls="uploadTab">上传插件</button>
+            <button class="tab-btn" data-tab="presetTab" id="tabPreset" role="tab" aria-selected="false" aria-controls="presetTab">预设插件</button>
+            <button class="tab-btn" data-tab="networkTab" id="tabNetwork" role="tab" aria-selected="false" aria-controls="networkTab">网络安装</button>
         </div>
 
-        <div class="tab-content active" id="uploadTab" role="tabpanel">
+        <div class="tab-content active" id="uploadTab" role="tabpanel" aria-labelledby="tabUpload">
             <div class="form-group">
                 <label for="pluginZip">上传插件压缩包 (.zip)</label>
                 <input type="file" id="pluginZip" accept=".zip" class="form-control">
@@ -36,7 +36,7 @@
             <div id="uploadProgress" class="meta-text" style="margin-top:8px"></div>
         </div>
 
-        <div class="tab-content" id="presetTab" role="tabpanel">
+        <div class="tab-content" id="presetTab" role="tabpanel" aria-labelledby="tabPreset">
             <div class="form-group">
                 <label for="presetSearch" class="sr-only">搜索预设插件</label>
                 <input type="text" id="presetSearch" class="form-control" placeholder="搜索预设插件..." inputmode="search" enterkeyhint="search" oninput="renderPresets()">
@@ -48,7 +48,7 @@
             </div>
         </div>
 
-        <div class="tab-content" id="networkTab" role="tabpanel">
+        <div class="tab-content" id="networkTab" role="tabpanel" aria-labelledby="tabNetwork">
             <div class="form-group">
                 <label for="marketUrl">插件市场源</label>
                 <select id="marketUrl" class="form-control" onchange="onMarketSourceChange()">
@@ -70,31 +70,31 @@
 </div>
 
 <!-- Plugin Detail Modal -->
-<div class="modal-overlay" id="pluginDetailModal" role="dialog" aria-modal="true" aria-labelledby="detailName">
-    <div class="modal modal-lg">
+<div class="modal-overlay" id="pluginDetailModal" role="presentation">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="detailName">
         <h2 id="detailName"></h2>
-        <div class="tabs" role="tablist">
-            <button class="tab-btn active" data-tab="detailInfoTab" role="tab" aria-selected="true">信息</button>
-            <button class="tab-btn" data-tab="detailConfigTab" role="tab" aria-selected="false">配置</button>
-            <button class="tab-btn" data-tab="detailDataTab" role="tab" aria-selected="false">数据</button>
-            <button class="tab-btn" data-tab="detailReadmeTab" role="tab" aria-selected="false">文档</button>
+        <div class="tabs" role="tablist" aria-label="插件详情">
+            <button class="tab-btn active" id="tabDetailInfo" data-tab="detailInfoTab" role="tab" aria-selected="true" aria-controls="detailInfoTab">信息</button>
+            <button class="tab-btn" data-tab="detailConfigTab" id="tabDetailConfig" role="tab" aria-selected="false" aria-controls="detailConfigTab">配置</button>
+            <button class="tab-btn" data-tab="detailDataTab" id="tabDetailData" role="tab" aria-selected="false" aria-controls="detailDataTab">数据</button>
+            <button class="tab-btn" data-tab="detailReadmeTab" id="tabDetailReadme" role="tab" aria-selected="false" aria-controls="detailReadmeTab">文档</button>
         </div>
-        <div class="tab-content active" id="detailInfoTab" role="tabpanel"></div>
-        <div class="tab-content" id="detailConfigTab" role="tabpanel">
+        <div class="tab-content active" id="detailInfoTab" role="tabpanel" aria-labelledby="tabDetailInfo"></div>
+        <div class="tab-content" id="detailConfigTab" role="tabpanel" aria-labelledby="tabDetailConfig">
             <div class="form-row" style="margin-bottom:10px">
                 <input type="file" id="configUploadInput" class="form-control" aria-label="上传配置文件">
                 <button class="btn btn-sm btn-primary" onclick="uploadConfigFile()">上传</button>
             </div>
             <pre id="detailConfig" class="pre-scroll"></pre>
         </div>
-        <div class="tab-content" id="detailDataTab" role="tabpanel">
+        <div class="tab-content" id="detailDataTab" role="tabpanel" aria-labelledby="tabDetailData">
             <div class="form-row" style="margin-bottom:10px">
                 <input type="file" id="dataUploadInput" class="form-control" aria-label="上传数据文件">
                 <button class="btn btn-sm btn-primary" onclick="uploadDataFile()">上传</button>
             </div>
             <div id="detailDataList"></div>
         </div>
-        <div class="tab-content" id="detailReadmeTab" role="tabpanel"><div id="detailReadme" class="pre-scroll" style="font-size:13px"></div></div>
+        <div class="tab-content" id="detailReadmeTab" role="tabpanel" aria-labelledby="tabDetailReadme"><div id="detailReadme" class="pre-scroll" style="font-size:13px"></div></div>
         <div class="modal-actions">
             <button class="btn btn-outline" onclick="closeModal('pluginDetailModal')">关闭</button>
         </div>

@@ -23,19 +23,19 @@ function renderList() {
         return;
     }
     if (empty) empty.style.display = 'none';
+    // 安全：使用 data-* 属性承载 id（data-attr 经过 HTML 实体编码），事件委托派发
+    // 避免 onclick="fn('...')" 字符串拼接导致的属性上下文注入（XSS）
     tbody.innerHTML = _connCache.map(function (c) {
         var addr = (c.host || '') + ':' + (c.port != null ? c.port : '');
         var def = c.is_default
             ? '<span class="badge-default">默认</span>'
             : '<span class="badge-normal">—</span>';
-        // 转义 c.id 防止 onclick 属性上下文注入（单引号闭合）
-        var eid = escapeHtml(c.id || '');
         var nameEsc = escapeHtml(c.name || '');
         var defaultBtn;
         if (c.is_default) {
             defaultBtn = '<button class="btn btn-sm btn-outline" disabled aria-disabled="true">默认</button>';
         } else {
-            defaultBtn = '<button class="btn btn-sm btn-outline" aria-label="设为连接 ' + nameEsc + ' 为默认" onclick="setDefault(\'' + eid + '\', this)">设为默认</button>';
+            defaultBtn = '<button class="btn btn-sm btn-outline" data-action="default" data-id="' + escapeHtml(c.id || '') + '" aria-label="设为连接 ' + nameEsc + ' 为默认">设为默认</button>';
         }
         return '<tr>' +
             '<td>' + nameEsc + '</td>' +
@@ -43,13 +43,38 @@ function renderList() {
             '<td>' + escapeHtml(c.protocol || '') + '</td>' +
             '<td>' + def + '</td>' +
             '<td style="white-space:nowrap">' +
-                '<button class="btn btn-sm btn-primary" aria-label="编辑连接 ' + nameEsc + '" onclick="openForm(\'' + eid + '\')">编辑</button> ' +
+                '<button class="btn btn-sm btn-primary" data-action="edit" data-id="' + escapeHtml(c.id || '') + '" aria-label="编辑连接 ' + nameEsc + '">编辑</button> ' +
                 defaultBtn + ' ' +
-                '<button class="btn btn-sm btn-danger" aria-label="删除连接 ' + nameEsc + '" onclick="removeConnection(\'' + eid + '\')">删除</button>' +
+                '<button class="btn btn-sm btn-danger" data-action="delete" data-id="' + escapeHtml(c.id || '') + '" aria-label="删除连接 ' + nameEsc + '">删除</button>' +
             '</td>' +
         '</tr>';
     }).join('');
 }
+
+// 事件委托：tbody 上统一监听 click，依据 data-action 派发
+// 减少监听器数量（10 行 vs 30 个），同时避免 inline onclick 的 XSS 风险
+(function _bindConnTableDelegation() {
+    function bind() {
+        var tbody = document.getElementById('connTableBody');
+        if (!tbody || tbody.__tdBound) return;
+        tbody.__tdBound = true;
+        tbody.addEventListener('click', function (e) {
+            var btn = e.target.closest && e.target.closest('button[data-action]');
+            if (!btn) return;
+            var action = btn.getAttribute('data-action');
+            var id = btn.getAttribute('data-id');
+            if (!action || id == null) return;
+            // 反查 _connCache 获取真实 id（id 来源唯一为后端，避免任何 HTML 转义歧义）
+            var conn = _connCache.find(function (c) { return String(c.id) === String(id); });
+            var realId = conn ? conn.id : id;
+            if (action === 'edit') openForm(realId);
+            else if (action === 'default') setDefault(realId, btn);
+            else if (action === 'delete') removeConnection(realId);
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+    else bind();
+})();
 
 function loadConnections() {
     var tbody = document.getElementById('connTableBody');
@@ -228,7 +253,8 @@ function testConnection(evt) {
     var btn = (evt && evt.currentTarget) || (typeof event !== 'undefined' && event.target);
     if (btn) { btn.disabled = true; var oldText = btn.textContent; btn.textContent = '测试中...'; }
     try {
-        fetch('/api/connections/test', {
+        var f = window.tdFetch || fetch;
+        f('/api/connections/test', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ host: host, port: port })
         })
@@ -255,7 +281,8 @@ function removeConnection(id) {
             var idx = _connCache.findIndex(function (c) { return c.id === id; });
             if (idx >= 0) _connCache.splice(idx, 1);
             renderList();
-            fetch('/api/connections/delete', {
+            var f = window.tdFetch || fetch;
+            f('/api/connections/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: id }),
@@ -278,7 +305,8 @@ function removeConnection(id) {
         }, true);
     } else {
         // 兼容回退：无自定义确认弹窗时直接删除
-        fetch('/api/connections/delete', {
+        var f = window.tdFetch || fetch;
+        f('/api/connections/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: id }),
@@ -294,7 +322,8 @@ function removeConnection(id) {
 
 function setDefault(id, btn) {
     if (btn) { btn.disabled = true; var oldText = btn.textContent; btn.textContent = '...'; }
-    fetch('/api/connections/default', {
+    var f = window.tdFetch || fetch;
+    f('/api/connections/default', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: id }),

@@ -29,14 +29,18 @@
 
   function applyDep(d) {
     if (!d || _completed) return;
+    // 防御：若关键 DOM 元素缺失（如模板裁剪），跳过更新避免 TypeError
+    if (!bar || !percent || !stage || !mirror) return;
     var p = Math.max(0, Math.min(100, d.progress || 0));
     bar.style.width = p + '%';
     percent.textContent = p + '%';
     stage.textContent = d.stage || (d.ready ? '依赖已就绪' : '准备中…');
     mirror.textContent = d.mirror || (d.status === 'installing' ? '测速中…' : '—');
     if (d.log_tail && d.log_tail.length) {
-      log.textContent = d.log_tail.join('\n');
-      log.scrollTop = log.scrollHeight;
+      if (log) {
+        log.textContent = d.log_tail.join('\n');
+        log.scrollTop = log.scrollHeight;
+      }
     }
     if (d.ready) {
       _completed = true;
@@ -44,7 +48,7 @@
     } else {
       showOverlay();
       showRun();
-      actions.style.display = (d.status === 'failed') ? 'flex' : 'none';
+      if (actions) actions.style.display = (d.status === 'failed') ? 'flex' : 'none';
     }
   }
 
@@ -86,8 +90,15 @@
   // （console.js 在 base.html 的 {% block scripts %} 中加载，晚于 deps.js；
   //  等 DOM 解析完成后 window.socket 已就绪，可复用同一 polling 连接，节省一条长轮询）
   function _registerDepSocket() {
-    var s = (window.socket && window.socket.io) ? window.socket : io({ transports: ['polling'] });
-    s.on('dependency_progress', function (d) { applyDep(d); });
+    try {
+      // 双重防御：window.socket 不可用且 io 全局未定义（如 socket.io.min.js 加载失败）时，
+      // 静默降级为仅轮询拉取，避免抛 ReferenceError 阻断初始化
+      var s;
+      if (window.socket && window.socket.io) s = window.socket;
+      else if (typeof window.io === 'function') s = window.io({ transports: ['polling'] });
+      else return;
+      s.on('dependency_progress', function (d) { applyDep(d); });
+    } catch (e) { /* 静默：socket 不可用时降级为仅轮询拉取 */ }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _registerDepSocket);

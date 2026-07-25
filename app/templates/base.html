@@ -3,13 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-    <meta name="theme-color" content="#5e6ad2" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0f1011" media="(prefers-color-scheme: dark)">
-    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" id="themeColor" content="#0f1011">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; media-src 'self' data: blob:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; media-src 'self' data: blob:;">
     <title>ToolDelta Web 管理面板</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script>
@@ -36,11 +34,9 @@
           }
           document.documentElement.setAttribute('data-theme', actual);
           document.documentElement.style.setProperty('color-scheme', actual);
-          // theme-color 跟随：移动端浏览器顶栏配色（更新所有 theme-color meta）
-          var metas = document.querySelectorAll('meta[name="theme-color"]');
-          metas.forEach(function(m) {
-            m.setAttribute('content', actual === 'light' ? '#eef1f6' : '#0f1011');
-          });
+          // theme-color 跟随：移动端浏览器顶栏配色（单一 meta，由 JS 设置 content）
+          var mc = document.querySelector('meta[name="theme-color"]');
+          if (mc) mc.setAttribute('content', actual === 'light' ? '#eef1f6' : '#0f1011');
         }
         applyTheme(stored);
         // 系统主题变化时若用户选 system 则跟随
@@ -119,7 +115,7 @@
     <a href="#mainContent" class="skip-link">跳到主要内容</a>
     {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
     <script src="/static/js/wallpaper.js"></script>
-    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false">☰</button>
+    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false"><span class="nav-ico" data-icon="list" aria-hidden="true"></span></button>
     <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()" role="button" tabindex="0" aria-label="关闭菜单"></div>
     <script>
       /* ── Android 侧边栏边缘滑动手势 ──
@@ -173,18 +169,18 @@
             <span class="sr-only" id="sidebarStatusText">连接状态未知</span>
         </div>
         <nav aria-label="主导航">
-            <a href="/" class="{% if active_page == 'index' %}active{% endif %}" {% if active_page == 'index' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📊</span>仪表盘</a>
-            <a href="/console" class="{% if active_page == 'console' %}active{% endif %}" {% if active_page == 'console' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🖥️</span>控制台</a>
-            <a href="/plugins" class="{% if active_page == 'plugins' %}active{% endif %}" {% if active_page == 'plugins' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧩</span>插件管理</a>
-            <a href="/market" class="{% if active_page == 'market' %}active{% endif %}" {% if active_page == 'market' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🛒</span>插件市场</a>
-            <a href="/files" class="{% if active_page == 'files' %}active{% endif %}" {% if active_page == 'files' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📁</span>文件管理</a>
-            <a href="/commands" class="{% if active_page == 'commands' %}active{% endif %}" {% if active_page == 'commands' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">⌨️</span>命令参考</a>
-            <a href="/backup" class="{% if active_page == 'backup' %}active{% endif %}" {% if active_page == 'backup' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💾</span>备份恢复</a>
-            <a href="/logs" class="{% if active_page == 'logs' %}active{% endif %}" {% if active_page == 'logs' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📜</span>日志</a>
-            <a href="/connections" class="{% if active_page == 'connections' %}active{% endif %}" {% if active_page == 'connections' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🌐</span>服务器连接</a>
-            <a href="/watchdog" class="{% if active_page == 'watchdog' %}active{% endif %}" {% if active_page == 'watchdog' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🐕</span>看门狗</a>
-            <a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}" {% if active_page == 'scheduler' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">⏰</span>定时任务</a>
-            <a href="/settings" class="nav-separator {% if active_page == 'settings' %}active{% endif %}" {% if active_page == 'settings' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎛️</span>面板设置</a>
+            <a href="/" class="{% if active_page == 'index' %}active{% endif %}" {% if active_page == 'index' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="dashboard" aria-hidden="true"></span>仪表盘</a>
+            <a href="/console" class="{% if active_page == 'console' %}active{% endif %}" {% if active_page == 'console' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="terminal" aria-hidden="true"></span>控制台</a>
+            <a href="/plugins" class="{% if active_page == 'plugins' %}active{% endif %}" {% if active_page == 'plugins' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="puzzle" aria-hidden="true"></span>插件管理</a>
+            <a href="/market" class="{% if active_page == 'market' %}active{% endif %}" {% if active_page == 'market' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="shopping-cart" aria-hidden="true"></span>插件市场</a>
+            <a href="/files" class="{% if active_page == 'files' %}active{% endif %}" {% if active_page == 'files' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="folder" aria-hidden="true"></span>文件管理</a>
+            <a href="/commands" class="{% if active_page == 'commands' %}active{% endif %}" {% if active_page == 'commands' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="keyboard" aria-hidden="true"></span>命令参考</a>
+            <a href="/backup" class="{% if active_page == 'backup' %}active{% endif %}" {% if active_page == 'backup' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="archive" aria-hidden="true"></span>备份恢复</a>
+            <a href="/logs" class="{% if active_page == 'logs' %}active{% endif %}" {% if active_page == 'logs' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="scroll-text" aria-hidden="true"></span>日志</a>
+            <a href="/connections" class="{% if active_page == 'connections' %}active{% endif %}" {% if active_page == 'connections' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="globe" aria-hidden="true"></span>服务器连接</a>
+            <a href="/watchdog" class="{% if active_page == 'watchdog' %}active{% endif %}" {% if active_page == 'watchdog' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="dog" aria-hidden="true"></span>看门狗</a>
+            <a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}" {% if active_page == 'scheduler' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="clock" aria-hidden="true"></span>定时任务</a>
+            <a href="/settings" class="nav-separator {% if active_page == 'settings' %}active{% endif %}" {% if active_page == 'settings' %}aria-current="page"{% endif %}><span class="nav-ico" data-icon="settings" aria-hidden="true"></span>面板设置</a>
         </nav>
         <div class="sidebar-footer">
             <div class="footer-actions-row">
@@ -192,7 +188,7 @@
                 <span class="theme-icon" aria-hidden="true"></span><span class="theme-label">主题</span>
               </button>
               <button class="notify-toggle" onclick="openNotifyPanel()" data-tip="通知历史" aria-label="通知历史">
-                <span class="notify-ico" aria-hidden="true">🔔</span>
+                <span class="notify-ico" data-icon="bell" aria-hidden="true"></span>
                 <span class="notify-badge" id="notifyBadge" style="display:none" aria-hidden="true">0</span>
               </button>
             </div>
@@ -216,7 +212,7 @@
     <main class="main-content" id="mainContent" aria-label="主要内容">
         <!-- 离线横幅：参考 koder.ai offline state —— 持续提示直到恢复连接 -->
         <div id="offlineBanner" class="offline-banner" role="status" aria-live="polite" hidden>
-          <span aria-hidden="true">📡</span> 当前处于离线状态，部分功能不可用
+          <span class="offline-ico" data-icon="wifi-off" aria-hidden="true"></span> 当前处于离线状态，部分功能不可用
         </div>
         {% block content %}{% endblock %}
     </main>
@@ -237,7 +233,7 @@
                 </div>
                 <div class="dep-options">
                     <button class="dep-opt" onclick="triggerDepInstall('local')">
-                        <div class="dep-opt-ico" aria-hidden="true">📦</div>
+                        <div class="dep-opt-ico" data-icon="package" aria-hidden="true"></div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">本地安装<span class="dep-opt-sub">（离线）</span></div>
                             <div class="dep-opt-desc">使用随附离线包，无需联网，适合共享服务器 / 无外网环境。</div>
@@ -245,7 +241,7 @@
                         <span class="dep-opt-tag">可能版本较旧</span>
                     </button>
                     <button class="dep-opt" onclick="triggerDepInstall('online')">
-                        <div class="dep-opt-ico" aria-hidden="true">🌐</div>
+                        <div class="dep-opt-ico" data-icon="globe" aria-hidden="true"></div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">网络安装<span class="dep-opt-sub">（在线）</span></div>
                             <div class="dep-opt-desc">从 PyPI / 镜像源下载最新版本，需要联网。</div>
@@ -315,12 +311,8 @@
             </div>
         </div>
     </div>
-    <script>
-      // 清空通知历史（仅前端归档，不影响已发出的 toast）
-      function _clearNotifyHistory() {
-        try { _TOAST_HISTORY.length = 0; _NOTIFY_UNREAD = 0; _updateNotifyBadge(); _renderNotifyList(); } catch(e) {}
-      }
-    </script>
+    <!-- 注：_clearNotifyHistory 由 main.js 完整实现（含 localStorage 清理 + 重渲染），
+         此处不再重复内联定义，避免双实现冲突（base.html 简版不清存储，刷新后历史又出现）。 -->
 
     <!-- 命令面板 Cmd+K（参考 Linear / Raycast / Vercel cmdk） -->
     <div class="modal-overlay" id="cmdPalette" role="presentation">
@@ -337,8 +329,8 @@
             </div>
         </div>
     </div>
-    <!-- 移动端悬浮触发按钮（仅小屏显示，CSS 控制） -->
-    <button class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板">⌘</button>
+    <!-- 移动端悬浮触发按钮（仅小屏显示，CSS 控制）—— 使用 SVG 图标替代 Unicode ⌘ -->
+    <button class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板"><span data-icon="command" aria-hidden="true"></span></button>
 
     <!-- 键盘快捷键帮助（参考 GitHub `?` 快捷键速查） -->
     <div class="modal-overlay" id="shortcutsModal" role="presentation">
@@ -359,10 +351,11 @@
         </div>
     </div>
 
-    <script src="/static/js/socket.io.min.js"></script>
-    <script src="/static/js/main.js"></script>
-    <script src="/static/js/palette.js"></script>
-    <script src="/static/js/deps.js"></script>
+    <script src="/static/js/socket.io.min.js" defer></script>
+    <script src="/static/js/icons.js" defer></script>
+    <script src="/static/js/main.js" defer></script>
+    <script src="/static/js/palette.js" defer></script>
+    <script src="/static/js/deps.js" defer></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
