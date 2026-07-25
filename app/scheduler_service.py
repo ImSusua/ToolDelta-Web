@@ -214,10 +214,16 @@ class SchedulerService:
         return dict(job)
 
     def update_job(self, job_id, payload):
+        """更新任务。返回 (ok, message)：
+        - (True, "")：更新成功
+        - (False, "任务不存在")：job_id 未找到
+        - (False, "<校验错误详情>")：参数非法（原代码返回 False 让路由显示"任务不存在"，
+          误导用户以为任务被删，其实是 interval/type/command 等字段不合法）
+        保留 tuple 返回值，路由层据此返回明确错误信息。"""
         if not job_id:
-            return False
+            return False, "缺少任务 id"
         if not isinstance(payload, dict):
-            return False
+            return False, "参数格式错误"
         with self._lock:
             base = None
             for j in self._jobs:
@@ -225,11 +231,13 @@ class SchedulerService:
                     base = j
                     break
             if base is None:
-                return False
+                return False, "任务不存在"
             try:
                 updated = self._validate_and_build(payload, base)
-            except ValueError:
-                return False
+            except ValueError as e:
+                # 关键修正：原代码吞掉 ValueError 返回 False，路由层误报"任务不存在"，
+                # 但任务其实存在只是参数非法。这里把具体校验错误透传给调用方
+                return False, str(e)
             updated["id"] = job_id
             # 保留运行时计数（仅当 payload 未显式覆盖时）
             if "run_count" not in payload:
@@ -242,7 +250,7 @@ class SchedulerService:
             idx = self._jobs.index(base)
             self._jobs[idx] = updated
             self._write_locked()
-        return True
+        return True, ""
 
     def delete_job(self, job_id):
         if not job_id:

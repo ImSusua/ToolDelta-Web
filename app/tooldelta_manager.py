@@ -418,15 +418,29 @@ class ToolDeltaManager:
 
     def _start_after_deps(self):
         """依赖未就绪时，在后台等待安装完成后再拉起主程序。"""
-        from app.dependency_service import dependency_service
-        ok, msg = dependency_service.ensure_installed_blocking(timeout=600)
-        if not ok:
-            self._broadcast("system", "依赖安装失败，无法启动：" + msg)
-            return
-        with self._lock:
-            if self.running:
+        # 整体 try/except：daemon 线程未捕获异常会静默退出，前端将持续显示
+        # "依赖安装进行中，请稍候" 但永远不会触发启动，用户无从知晓失败原因。
+        # 兜底捕获后广播失败原因，让用户能感知并手动重试。
+        try:
+            from app.dependency_service import dependency_service
+            ok, msg = dependency_service.ensure_installed_blocking(timeout=600)
+            if not ok:
+                self._broadcast("system", "依赖安装失败，无法启动：" + msg)
                 return
-            self._spawn()
+            with self._lock:
+                if self.running:
+                    return
+                self._spawn()
+        except Exception as e:
+            try:
+                from app.log_service import log_service
+                log_service.error("_start_after_deps 异常: " + str(e), "TOOLDELTA")
+            except Exception:
+                pass
+            try:
+                self._broadcast("system", "后台启动失败: " + str(e))
+            except Exception:
+                pass
 
     def _spawn(self):
         """真正拉起 ToolDelta 子进程（依赖已就绪的前提下）。
@@ -578,17 +592,6 @@ class ToolDeltaManager:
                     pass
         return self.start()
 
-    def _auto_send(self, text):
-        """向子进程 stdin 发送一行文本（调用者必须已持有 _lock）。"""
-        try:
-            if self.process and self.process.stdin:
-                self.process.stdin.write((text + "\n").encode("utf-8", errors="replace"))
-                self.process.stdin.flush()
-                return True
-        except Exception:
-            pass
-        return False
-
     # 控制台命令长度上限：防止超大 payload 拖垮或阻塞 stdin（P2-2）
     MAX_COMMAND_LEN = 8192
 
@@ -598,10 +601,25 @@ class ToolDeltaManager:
         if len(cmd) > self.MAX_COMMAND_LEN:
             self._broadcast("system", "命令过长，已被忽略")
             return False
+        # 关键：必须在锁外执行 stdin.write/flush，否则子进程不读 stdin 时管道缓冲区
+        # 写满会无限阻塞 write()，此时锁被持有，stop()/get_status()/restart()/
+        # 其他 send_command 全部卡死，整个面板无响应（与 scheduler_service._run_job
+        # 之前的死锁问题同源）。改为：锁内只快照 process 与 running，锁外执行写。
         with self._lock:
-            if self.running and self.process and self.process.stdin:
-                return self._auto_send(cmd)
-        return False
+            running = self.running
+            proc = self.process
+        if not running or not proc or not proc.stdin:
+            return False
+        try:
+            proc.stdin.write((cmd + "\n").encode("utf-8", errors="replace"))
+            proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError, ValueError):
+            # 子进程已退出/管道关闭：标记 running=False 让前端感知
+            with self._lock:
+                if self.process is proc:
+                    self.running = False
+            return False
 
     def _read_output(self):
         # 在锁内一次性快照读取源与进程对象，避免 stop() 并发修改导致 TOCTOU 竞态
@@ -620,9 +638,14 @@ class ToolDeltaManager:
         import select as _select
         buf = b""
         fd = pty_master if pty_master is not None else (stdout.fileno() if stdout and hasattr(stdout, "fileno") else None)
+        # Windows 的 select.select 仅支持 socket fd，对管道/pty fd 会抛
+        # OSError(WinError 10038)，被 except 捕获后 break 会让 output 线程立即退出，
+        # 导致子进程仍在运行但前端无任何输出且 running=False 让 send_command 失效。
+        # Windows 下回退为 readline + 短轮询 proc.poll() 的兼容路径。
+        use_select = fd is not None and os.name != "nt"
         while self.running and proc and proc.poll() is None:
             try:
-                if fd is not None:
+                if use_select:
                     # 最多等待 150ms：有数据就立即读，超时则 flush 残留缓冲
                     ready, _, _ = _select.select([fd], [], [], 0.15)
                     if not ready:
@@ -631,12 +654,23 @@ class ToolDeltaManager:
                             self._emit_line(self._decode_line(buf))
                             buf = b""
                         continue
-                if pty_master is not None:
-                    chunk = os.read(pty_master, 4096)
-                elif stdout is not None:
-                    chunk = stdout.read(4096)
+                    if pty_master is not None:
+                        chunk = os.read(pty_master, 4096)
+                    elif stdout is not None:
+                        chunk = stdout.read(4096)
+                    else:
+                        break
                 else:
-                    break
+                    # Windows / 无 fd 路径：readline 阻塞读单行，配合 150ms 短轮询
+                    # proc.poll() 保证子进程退出后能及时结束循环。
+                    # readline 不会卡死：管道在子进程退出时返回 EOF(空 bytes)。
+                    line = stdout.readline() if stdout is not None else b""
+                    chunk = line if line else b""
+                    if not chunk:
+                        break
+                    # readline 已含换行，直接 emit 即可，无需再走 buf 拼接路径
+                    self._emit_line(self._decode_line(chunk))
+                    continue
             except (OSError, ValueError):
                 break
             if not chunk:
@@ -648,9 +682,14 @@ class ToolDeltaManager:
         if buf:
             self._emit_line(self._decode_line(buf))
         with self._lock:
-            self.running = False
-            # 如果 self.process 已经被 stop() 设置为 None，就不重复广播
-            if self.process:
+            # 关键校验：self.process 必须仍是本线程当初监控的 proc 才能置 running=False。
+            # 否则在 restart 场景下：stop() 把 self.process 置 None，旧 _read_output 线程
+            # 在 emit 残留 buf（_broadcast 调 socketio.emit 可能耗时数十 ms）期间，
+            # restart 的 start()/_spawn() 已设置 self.process=new_proc 并启动新线程。
+            # 旧线程随后持锁把 running 置回 False 并广播"进程已退出"，但新进程其实还在运行，
+            # 导致 send_command 等后续操作全部失效（与 #2 send_command 死锁同源问题模式）。
+            if self.process is proc:
+                self.running = False
                 self._broadcast("system", "ToolDelta 进程已退出")
 
     def _decode_line(self, raw):

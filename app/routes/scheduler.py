@@ -50,13 +50,16 @@ def api_update():
     if not job_id:
         return jsonify({"success": False, "message": "缺少任务 id"})
     try:
-        ok = scheduler_service.update_job(job_id, payload)
-    except ValueError as e:
-        return jsonify({"success": False, "message": str(e)})
+        # update_job 返回 (ok, message)：
+        # - 任务不存在 → "任务不存在"
+        # - 参数非法（interval 负数、type 不合法等）→ 透传具体校验错误
+        # 原 update_job 把 ValueError 吞掉返回 False，路由统一显示"任务不存在"，
+        # 误导管理员以为任务被删，其实是参数不合法。现改为透传 message。
+        ok, msg = scheduler_service.update_job(job_id, payload)
     except Exception:
         return jsonify({"success": False, "message": "更新任务失败"})
     if not ok:
-        return jsonify({"success": False, "message": "任务不存在"})
+        return jsonify({"success": False, "message": msg or "更新失败"})
     return jsonify({"success": True})
 
 

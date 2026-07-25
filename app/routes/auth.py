@@ -3,6 +3,7 @@ from app import auth_service
 from app.log_service import log_service
 from app import wallpaper_service as wp_service
 import time
+import re
 
 bp = Blueprint("auth", __name__)
 
@@ -15,10 +16,29 @@ def ok(data=None):
 def fail(msg):
     return jsonify({"success": False, "error": msg})
 
+def _client_ip():
+    """获取客户端真实 IP。
+    优先使用 request.access_route[0]（最左侧，通常为客户端真实 IP，需配合 ProxyFix），
+    回退到 request.remote_addr。仅当部署在可信反代后并通过 BEHIND_PROXY=1 启用
+    ProxyFix 时 access_route 才包含可信的 X-Forwarded-For 链。"""
+    addrs = getattr(request, "access_route", None)
+    if addrs:
+        return addrs[0]
+    return request.remote_addr or "?"
+
 def audit(action, detail=""):
     user = session.get("username", "?")
-    ip = request.remote_addr or "?"
+    ip = _client_ip()
     log_service.info(f"[{user}@{ip}] {action} {detail}", "AUDIT")
+
+def _sanitize_for_log(s):
+    """日志注入防护：去除换行/制表等控制字符，防止伪造日志行。
+    用户名等用户输入若含 \\n、\\r 等会被拼入日志 message，可伪造新的日志行
+    干扰审计排查。校验未通过的 username 可包含任意字符，必须过滤。"""
+    if not isinstance(s, str):
+        return str(s)
+    # 替换所有控制字符（含 \r\n\t）为可见占位
+    return re.sub(r'[\x00-\x1f\x7f]', '?', s)
 
 @bp.route("/login")
 def login_page():
@@ -36,7 +56,7 @@ def setup_page():
 def setup():
     if auth_service.is_configured():
         return fail("已配置")
-    ip = request.remote_addr or "?"
+    ip = _client_ip()
     allowed, msg = auth_service.check_login_rate(ip)
     if not allowed:
         return fail(msg)
@@ -76,7 +96,7 @@ def setup():
 
 @bp.route("/api/login", methods=["POST"])
 def login():
-    ip = request.remote_addr or "?"
+    ip = _client_ip()
     allowed, msg = auth_service.check_login_rate(ip)
     if not allowed:
         return fail(msg)
@@ -87,7 +107,9 @@ def login():
     valid, _ = auth_service.validate_username(username)
     if not valid:
         auth_service.record_login_fail(ip)
-        log_service.warn(f"[{ip}] 登录失败(非法用户名): {username}", "AUDIT")
+        # 日志注入防护：username 未通过校验说明含非法字符（可能含 \n 等控制字符），
+        # 直接拼入日志会伪造新的日志行干扰审计排查，必须过滤控制字符
+        log_service.warn(f"[{ip}] 登录失败(非法用户名): {_sanitize_for_log(username)}", "AUDIT")
         return fail("用户名或密码错误")
     user = auth_service.verify_username_password(username, password)
     if user:
@@ -111,6 +133,14 @@ def login():
 
 @bp.route("/api/change-password", methods=["POST"])
 def change_password():
+    # 限流 + 失败审计：session 被劫持（XSS 偷 cookie / 公共电脑未注销）后，攻击者可
+    # 无限次暴力枚举 old_password，猜中后改成自己的密码锁定真实用户。
+    # 这里复用 check_login_rate（按 IP 限流）+ record_login_fail，
+    # 并在失败时写审计日志便于追责。成功路径同样记审计。
+    ip = _client_ip()
+    allowed, msg = auth_service.check_login_rate(ip)
+    if not allowed:
+        return fail(msg)
     data = request.get_json(silent=True) or {}
     old_pw = data.get("old_password") or ""
     new_pw = data.get("new_password") or ""
@@ -122,19 +152,30 @@ def change_password():
     username = session.get("username", "")
     ok_, err = auth_service.change_password(username, old_pw, new_pw)
     if ok_:
+        auth_service.clear_login_fails(ip)
         audit("修改密码", f"用户={username}")
+        # 关键：同步 session 中的 session_version 到新值。
+        # auth_service.change_password 成功后递增了 user.session_version，
+        # 若不同步 session 中的旧值，下一次请求时 before_request 会发现版本不一致
+        # 立即 session.clear() 跳转 /login——用户刚改完密码就被踢下线，体验割裂。
+        new_ver = auth_service.get_user_session_version(username)
+        if new_ver is not None:
+            session["session_version"] = new_ver
         level, tips = auth_service.check_password_strength(new_pw)
         data = {}
         if level != "strong" and tips:
             data["password_warning"] = {"level": level, "tips": tips}
         return ok(data)
+    # 旧密码错误：计入失败次数 + 审计日志，便于检测爆破
+    auth_service.record_login_fail(ip)
+    log_service.warn(f"[{username}@{ip}] 修改密码失败: {err}", "AUDIT")
     return fail(err)
 
 @bp.route("/api/reset-panel", methods=["POST"])
 def reset_panel():
     if session.get("role") != 10:
         return fail("无权限")
-    ip = request.remote_addr or "?"
+    ip = _client_ip()
     allowed, msg = auth_service.check_login_rate(ip)
     if not allowed:
         return fail(msg)
@@ -142,6 +183,7 @@ def reset_panel():
     password = data.get("password") or ""
     if not auth_service.verify_password(password):
         auth_service.record_login_fail(ip)
+        log_service.warn(f"[{session.get('username','?')}@{ip}] 重置面板失败(密码错误)", "AUDIT")
         return fail("密码错误")
     auth_service.clear_login_fails(ip)
     audit("重置面板", f"操作者={session.get('username','?')}")
@@ -158,8 +200,12 @@ def auth_status():
         "role": session.get("role", 0),
     })
 
-@bp.route("/logout")
+@bp.route("/logout", methods=["POST"])
 def logout():
+    # 改为 POST：避免 Logout CSRF。
+    # 原来是 GET，攻击者可在恶意页面嵌入 <a href="/logout">点击领奖</a>，
+    # 受害者点击即被登出。SameSite=Lax 允许顶层导航 GET 携带 cookie，无法防住。
+    # POST 要求携带 CSRF token 或同源 fetch，攻击者跨站无法伪造。
     audit("退出登录", f"用户={session.get('username','?')}")
     session.clear()
     return redirect("/login")

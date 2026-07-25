@@ -352,7 +352,8 @@ function closeConfirm(result) {
 }
 
 // 自定义输入弹窗（替代浏览器 prompt）
-function showPrompt(title, placeholder, defaultValue, callback) {
+// type 可选：'text'(默认) / 'password'(用于密码确认场景，避免明文显示被旁人窥视)
+function showPrompt(title, placeholder, defaultValue, callback, type) {
     _lastFocus = document.activeElement;
     var modal = document.getElementById('promptModal');
     var titleEl = document.getElementById('promptTitle');
@@ -361,6 +362,8 @@ function showPrompt(title, placeholder, defaultValue, callback) {
     titleEl.textContent = title;
     input.placeholder = placeholder || '';
     input.value = defaultValue || '';
+    // 支持密码模式：confirmReset 等场景输入当前密码时不希望明文显示
+    input.type = (type === 'password') ? 'password' : 'text';
     _promptCallback = callback;
     modal.classList.add('active');
     setTimeout(function() { input.focus(); input.select(); }, 50);
@@ -371,6 +374,8 @@ function closePrompt(result) {
     if (modal) modal.classList.remove('active');
     var input = document.getElementById('promptInput');
     var val = (result && input) ? input.value : null;
+    // 关闭后重置 type，避免下次 showPrompt 忘传 type 时残留 password 导致输入不可见
+    if (input) input.type = 'text';
     if (_promptCallback) {
         _promptCallback(val);
         _promptCallback = null;
@@ -423,6 +428,11 @@ function _clearInert() {
 // 兼容旧调用：点击 .modal-overlay 背景关闭（点击内容不关闭）
 document.addEventListener('click', function(e) {
     if (e.target.classList && e.target.classList.contains('modal-overlay')) {
+        // 确认/输入弹窗必须走专用回调：直接移除 active 会让 _confirmCallback 永远不被
+        // 调用且不重置为 null，未来若有回调在 if(!ok) 之前执行清理逻辑会导致清理被跳过。
+        // 这里与 Esc 键处理保持一致，背景点击等价于"取消"。
+        if (e.target.id === 'confirmModal') { if (typeof closeConfirm === 'function') closeConfirm(false); return; }
+        if (e.target.id === 'promptModal') { if (typeof closePrompt === 'function') closePrompt(false); return; }
         e.target.classList.remove('active');
         // 必须清理 inert 标记，否则弹窗视觉消失但 body 子元素仍带 inert，
         // 整个页面无法交互/聚焦，必须刷新才恢复
@@ -457,8 +467,12 @@ document.addEventListener('keydown', function(e) {
     }
     // 焦点陷阱：Tab 在弹窗内循环
     if (e.key === 'Tab' || e.keyCode === 9) {
-        var active = document.querySelector('.modal-overlay.active');
-        if (!active) return;
+        // 必须取最顶层 active 弹窗，与 Esc 处理保持一致。
+        // 原 querySelector 只返回 DOM 顺序中第一个（即最底层），当 confirm/prompt 弹窗
+        // 叠在业务弹窗之上时，Tab 焦点会被陷阱在底层弹窗中，用户无法用键盘操作顶层确认弹窗
+        var modals = document.querySelectorAll('.modal-overlay.active');
+        if (!modals.length) return;
+        var active = modals[modals.length - 1];
         var f = active.querySelectorAll('input:not([type=hidden]),select,textarea,button,a[href],[tabindex]:not([tabindex="-1"])');
         if (!f.length) return;
         var first = f[0], last = f[f.length - 1];

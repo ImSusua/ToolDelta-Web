@@ -375,6 +375,7 @@ function changePassword() {
 
 function confirmReset() {
     // 合并原两步（showConfirm + 原生 prompt）为单步 showPrompt 模态，与 files/backup/commands 一致
+    // 第五个参数 'password' 让 input.type=password，避免密码明文显示被旁人窥视
     showPrompt('请输入当前密码以确认重置面板', '输入当前密码', '', function(pw) {
         if (!pw) return;
         fetch('/api/reset-panel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw}) })
@@ -384,7 +385,7 @@ function confirmReset() {
             else { showToast(d.error||'重置失败', 'error'); }
         })
         .catch(function(){ showToast('请求失败', 'error'); });
-    });
+    }, 'password');
 }
 
 function createUser() {

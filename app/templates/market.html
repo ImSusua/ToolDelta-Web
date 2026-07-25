@@ -113,8 +113,15 @@ function showMarketDetail(pid) {
     }
     var btn = document.getElementById('marketInstallBtn');
     if (btn) btn.textContent = '安装 ' + p.name;
-    var modal = document.getElementById('marketDetailModal');
-    if (modal) modal.classList.add('active');
+    // 必须走 _openModal 而非直接 classList.add('active')：
+    // _openModal 负责 _setInertExcept（让背景不可 Tab 聚焦/屏幕阅读器访问）、
+    // 记录 _lastFocus（关闭后焦点归还触发按钮）、自动聚焦弹窗内首个可交互元素。
+    // 直接 add 会让背景内容仍可 Tab 聚焦，键盘导航断裂。
+    if (typeof _openModal === 'function') _openModal('marketDetailModal');
+    else {
+        var modal = document.getElementById('marketDetailModal');
+        if (modal) modal.classList.add('active');
+    }
 }
 
 function installFromMarket() {

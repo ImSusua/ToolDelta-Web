@@ -416,13 +416,21 @@ function showPluginDetail(name) {
     document.getElementById('detailReadme').innerHTML = '<div class="spinner"></div>';
     _openModal('pluginDetailModal');
 
+    // 竞态守卫：用户快速连续打开 A、B 详情时，A 的 fetch 较慢返回会把 A 的数据
+    // 覆盖到 B 的弹窗中。每个回调先校验 currentDetailName 是否仍是发起时的插件名，
+    // 已切换则丢弃过期结果。闭包捕获 originName 避免被后续修改影响。
+    var originName = name;
+    function stillActive() { return currentDetailName === originName; }
+
     fetch('/api/plugins/config?name=' + encodeURIComponent(name))
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (!stillActive()) return;
             var el = document.getElementById('detailConfig');
             if (el) el.textContent = (d && d.error) ? '无配置文件' : JSON.stringify(d, null, 2);
         })
         .catch(function() {
+            if (!stillActive()) return;
             var el = document.getElementById('detailConfig');
             if (el) el.textContent = '加载配置失败';
         });
@@ -430,9 +438,11 @@ function showPluginDetail(name) {
     fetch('/api/plugins/data-files?name=' + encodeURIComponent(name))
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (!stillActive()) return;
             renderDataFiles(d, name);
         })
         .catch(function() {
+            if (!stillActive()) return;
             var el = document.getElementById('detailDataList');
             if (el) el.innerHTML = '<div style="font-size:13px;color:var(--ink-subtle)">加载数据文件失败</div>';
         });
@@ -440,6 +450,7 @@ function showPluginDetail(name) {
     fetch('/api/plugins/readme?name=' + encodeURIComponent(name))
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (!stillActive()) return;
             if (!d || d.error) {
                 document.getElementById('detailReadme').innerHTML = '<div style="font-size:13px;color:var(--ink-subtle)">无文档</div>';
             } else {
@@ -453,6 +464,7 @@ function showPluginDetail(name) {
             }
         })
         .catch(function() {
+            if (!stillActive()) return;
             var rd = document.getElementById('detailReadme');
             if (rd) rd.innerHTML = '<div style="font-size:13px;color:var(--ink-subtle)">加载文档失败</div>';
         });

@@ -678,6 +678,23 @@ class DependencyService:
         except Exception as e:
             self._append_log("✘ 读取安装输出异常：" + str(e))
             return 1
+        finally:
+            # 异常路径下子进程未回收会变僵尸进程：_append_log/_parse_progress/
+            # _emit_progress 任一抛异常时，上面 for 循环中断但 pip 子进程可能
+            # 仍在运行。多次触发会累积多个僵尸进程。finally 确保 terminate + wait。
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            pass
+            except Exception:
+                pass
 
     def _try_offline_install(self, td_dir):
         """优先尝试从本地 wheels/ 离线安装，避免联网（共享服务器限流/无外网）。成功返回 True。"""

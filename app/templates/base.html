@@ -219,7 +219,10 @@
             </script>
             <div class="user-box">
                 <span class="user-name">{{ session.get('username','?') }}</span>
-                <a href="/logout" class="logout-link">退出</a>
+                {# 改为 POST 表单：避免 Logout CSRF（GET /logout 可被 <a href> 诱导触发） #}
+                <form method="post" action="/logout" style="display:inline">
+                    <button type="submit" class="logout-link" style="background:none;border:none;cursor:pointer;padding:0;font:inherit">退出</button>
+                </form>
             </div>
         </div>
     </aside>
