@@ -1,11 +1,23 @@
 {% extends "base.html" %}
 {% set active_page = "watchdog" %}
 {% block content %}
+<style>
+/* 看门狗状态卡片视觉化（tag-warning 全局缺失，在此页内补齐） */
+.tag-warning { background: rgba(245, 181, 10, 0.15); color: var(--warning, #f5b50a); }
+.watchdog-status-card {
+    padding: 14px 16px; border-radius: var(--r-md, 10px);
+    border: 1px solid var(--border, rgba(0,0,0,0.08));
+    background: var(--surface-2, rgba(0,0,0,0.02));
+}
+.watchdog-status-card[data-state="healthy"] { border-color: rgba(39,166,68,0.35); }
+.watchdog-status-card[data-state="degraded"] { border-color: rgba(245,181,10,0.45); }
+.watchdog-status-card[data-state="stopped"] { border-color: rgba(229,72,77,0.35); }
+</style>
 <div class="page-header">
     <h1>看门狗</h1>
     <div>
-        <button class="btn btn-primary" onclick="enableWatchdog(this)">启用</button>
-        <button class="btn btn-outline" onclick="disableWatchdog(this)">禁用</button>
+        <button class="btn btn-primary" id="enableWatchdogBtn" onclick="enableWatchdog(this)">启用</button>
+        <button class="btn btn-outline" id="disableWatchdogBtn" onclick="disableWatchdog(this)">禁用</button>
     </div>
 </div>
 
@@ -42,14 +54,17 @@
         <input type="number" id="cfg_restart_cooldown" class="form-control" min="0" value="30" inputmode="numeric" enterkeyhint="done">
     </div>
 
-    <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+    <button class="btn btn-primary" id="watchdogSaveBtn" onclick="saveConfig()">保存配置</button>
 </div>
 
 <div class="card">
     <h2>运行状态</h2>
-    <div id="statusArea" class="status-area" role="status" aria-live="polite">
+    <!-- 状态区不再整体 aria-live，避免每 3s 全量重写触发屏幕阅读器狂播；
+         仅独立的 brief 容器在健康状态变化时播报 -->
+    <div id="statusArea" class="status-area">
         <div class="loading-text">加载中...</div>
     </div>
+    <div id="watchdogBrief" role="status" aria-live="polite" class="sr-only"></div>
 </div>
 {% endblock %}
 

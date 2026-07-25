@@ -14,13 +14,13 @@
         <span id="consoleStatus" class="status-conn disconnected" role="status" aria-live="polite">未连接</span>
         <button class="btn btn-sm btn-outline" id="copyAllBtn" onclick="copyAllConsole()" aria-label="复制全部输出">复制</button>
         <button class="btn btn-sm btn-outline" id="scrollBottomBtn" onclick="scrollToBottom()" style="display:none" aria-label="滚动到最新">↓ 最新</button>
-        <span id="newMsgPill" class="new-msg-pill" style="display:none"><span id="newMsgCount">0</span> 条新</span>
+        <button id="newMsgPill" class="new-msg-pill" role="button" tabindex="0" aria-label="跳到最新" style="display:none"><span id="newMsgCount">0</span> 条新</button>
     </div>
     <div class="fav-strip" id="favStrip" aria-label="常用命令"></div>
     <div class="console-body" id="consoleBody" role="log" aria-label="控制台输出" tabindex="0"></div>
     <div class="console-foot">
         <input id="consoleInput" placeholder="输入命令...（↑/↓ 翻历史，Tab 补全）" autocomplete="off" inputmode="text" enterkeyhint="send" aria-label="命令输入">
-        <button class="console-send-btn" onclick="sendConsoleInput()" aria-label="发送命令">发送</button>
+        <button class="console-send-btn" id="console-send-btn" onclick="sendConsoleInput()" aria-label="发送命令">发送</button>
     </div>
 </div>
 
@@ -60,6 +60,12 @@
   font-weight: 600; cursor: pointer; animation: pulse 1.5s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.05); } }
+/* 尊重「减少动态效果」系统设置：禁用脉冲与新消息提示动画 */
+@media (prefers-reduced-motion: reduce) {
+  .pulse, .new-msg-pill { animation: none !important; }
+}
+/* consoleBody 键盘焦点可见性（无障碍） */
+#consoleBody:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 #copyAllBtn, #scrollBottomBtn { margin-left: auto; }
 #scrollBottomBtn { margin-left: 0; }
 .fav-strip { display:flex; flex-wrap:nowrap; gap:6px; padding:8px 12px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--hairline); min-height:34px; align-items:center; overflow-x:auto; -webkit-overflow-scrolling: touch; }
@@ -88,7 +94,7 @@
   .console-body { height: 40vh !important; max-height: 50vh; }
 }
 @media (max-width: 400px) {
-  .console-body { height: 32vh !important; font-size: 11px; }
+  .console-body { height: 50vh !important; font-size: 11px; }
 }
 .console-body > div { padding:1px 4px; border-radius:4px; transition: background .12s; }
 .console-body > div:hover { background: rgba(255,255,255,0.04); }

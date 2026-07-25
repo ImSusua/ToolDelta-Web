@@ -17,7 +17,9 @@ function showToast(msg, type, opts) {
     if (opts.action) dur = Math.max(dur, 8000);
     var t = document.createElement('div');
     t.className = 'toast ' + type;
-    t.setAttribute('role', 'status');
+    // error 用 alert（assertive），其余用 status（polite）
+    t.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    t.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
     var html = '<span class="toast-msg">' + _escHtml(msg) + '</span>';
     // 可选 action 按钮（如重试），参考 figr.design toast retry button
     if (opts.action && opts.action.label) {
@@ -69,6 +71,8 @@ function removeToast(t) {
 function _escHtml(s) {
     return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// 统一导出 escapeHtml，供 palette.js / 其他模块复用
+window._escHtml = _escHtml;
 
 // ─── 通用：带超时与错误归类的 fetch 封装 ───
 // 所有模块应使用 tdFetch 替代原生 fetch，统一处理超时与错误提示。
@@ -85,9 +89,25 @@ window.tdFetch = function(url, opts, timeoutMs) {
     }
     return fetch(url, opts).then(function(r) {
         if (timer) clearTimeout(timer);
+        // 401/403：会话过期，跳转登录（避免在 login/setup 页循环跳转）
+        if (r.status === 401 || r.status === 403) {
+            try {
+                if (location.pathname !== '/login' && location.pathname !== '/setup') {
+                    if (typeof showToast === 'function') showToast('登录已过期，请重新登录', 'warning');
+                    setTimeout(function() { location.href = '/login'; }, 800);
+                }
+            } catch(e) {}
+            var authErr = new Error('未授权');
+            authErr.userMessage = '未授权';
+            authErr.code = 'UNAUTHORIZED';
+            authErr.status = r.status;
+            throw authErr;
+        }
         return r;
     }).catch(function(e) {
         if (timer) clearTimeout(timer);
+        // 已有 userMessage 的错误（如 401/403 UNAUTHORIZED）直接透传，避免覆盖
+        if (e && e.userMessage && e.code === 'UNAUTHORIZED') throw e;
         // 包装错误，附 userMessage 供调用方展示
         var msg;
         if (e && e.name === 'AbortError') msg = '请求超时，请检查网络后重试';
@@ -252,6 +272,8 @@ function updateToggleState(running) {
         btn.setAttribute('data-running', running ? 'true' : 'false');
         btn.textContent = running ? '停止' : '启动';
         btn.className = 'btn ' + (running ? 'btn-danger' : 'btn-success');
+        // 首次状态回填后清除 aria-busy（index.html 初始为 "检测中..." 占位）
+        btn.setAttribute('aria-busy', 'false');
     });
     var sd = document.getElementById('sidebarStatus');
     if (sd) {
@@ -260,6 +282,9 @@ function updateToggleState(running) {
         // 同步无障碍标签，让屏幕阅读器能感知连接状态（不仅是颜色）
         sd.setAttribute('aria-label', running ? 'ToolDelta 运行中' : 'ToolDelta 已停止');
     }
+    // 同步 sr-only 文本（base.html 中 #sidebarStatusText）
+    var stText = document.getElementById('sidebarStatusText');
+    if (stText) stText.textContent = running ? 'ToolDelta 运行中' : 'ToolDelta 已停止';
 }
 
 // ─── 自定义确认弹窗（替代浏览器 confirm） + 输入确认弹窗 ───
@@ -402,20 +427,23 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// ─── 全局快捷键：/ 聚焦搜索框（非输入态时） ───
+// ─── 全局快捷键：/ 聚焦搜索框（非输入态时，避免 Firefox quick-find 冲突） ───
 document.addEventListener('keydown', function(e) {
     if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
-    var tag = (document.activeElement && document.activeElement.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    var search = document.querySelector('input[type=text][id*=Search], input[type=text][id*=search], #pluginSearch, #searchInput, #presetSearch, #marketSearch, #commandSearch');
-    if (search) { search.focus(); e.preventDefault(); }
+    var tag = (e.target && e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)) return;
+    e.preventDefault();
+    var search = document.querySelector('input[type=text][id*=Search], input[type=text][id*=search], #pluginSearch, #searchInput, #presetSearch, #marketSearch, #commandSearch, #logFilter');
+    if (search) { search.focus(); search.select(); }
 });
 
-// ─── 全局快捷键：? 唤起快捷键速查 / ⇧+T 切换主题（参考 GitHub 快捷键） ───
+// ─── 全局快捷键：? 唤起快捷键速查 / g t 切换主题（参考 GitHub 双键序列） ───
+// g t 双键序列：按 g 后 750ms 内按 t 触发主题切换，避免与浏览器 ⇧+T 冲突
+var _gKeyTimer = null;
 document.addEventListener('keydown', function(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    var tag = (document.activeElement && document.activeElement.tagName) || '';
-    var typing = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+    var tag = (e.target && e.target.tagName || '').toLowerCase();
+    var typing = (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable));
     // ? 唤起快捷键速查（不在输入态，且未已有弹窗打开时）
     if (e.key === '?' && !typing) {
         var anyOpen = document.querySelector('.modal-overlay.active');
@@ -425,10 +453,20 @@ document.addEventListener('keydown', function(e) {
         if (typeof _openModal === 'function') _openModal('shortcutsModal');
         return;
     }
-    // ⇧+T 切换主题（参考 GitHub g t 进入主题切换的衍生习惯）
-    if (e.shiftKey && (e.key === 'T' || e.key === 't') && !typing) {
-        e.preventDefault();
-        if (typeof toggleTheme === 'function') toggleTheme();
+    // g t 双键序列切换主题（参考 GitHub g t 进入主题切换）
+    if (!typing) {
+        if (e.key === 'g' || e.key === 'G') {
+            _gKeyTimer = setTimeout(function() { _gKeyTimer = null; }, 750);
+            return;
+        }
+        if ((e.key === 't' || e.key === 'T') && _gKeyTimer) {
+            clearTimeout(_gKeyTimer); _gKeyTimer = null;
+            e.preventDefault();
+            if (typeof toggleTheme === 'function') toggleTheme();
+            return;
+        }
+        // 任意其他键取消 g 等待
+        if (_gKeyTimer) { clearTimeout(_gKeyTimer); _gKeyTimer = null; }
     }
 });
 
@@ -738,16 +776,46 @@ if (document.getElementById('sidebarStatus') ||
 
 // ─── 通知中心：Toast 历史归档（参考 Linear 通知中心 / GitHub 通知下拉） ───
 // showToast 自动写入历史，侧边栏铃铛显示未读数，点击展开历史面板。
+// 历史持久化到 localStorage（action.fn 无法序列化，仅存 label）。
 var _TOAST_HISTORY = [];
 var _TOAST_HISTORY_MAX = 50;
 var _NOTIFY_UNREAD = 0;
+var _NOTIFY_KEY = 'td_notify_history';
+var _NOTIFY_UNREAD_KEY = 'td_notify_unread';
+
+// 从 localStorage 加载历史与未读数（页面加载时调用）
+function _loadNotifyHistory() {
+    try {
+        var saved = JSON.parse(localStorage.getItem(_NOTIFY_KEY) || '[]');
+        _TOAST_HISTORY = (saved || []).slice(0, _TOAST_HISTORY_MAX);
+    } catch(e) { _TOAST_HISTORY = []; }
+    try {
+        _NOTIFY_UNREAD = parseInt(localStorage.getItem(_NOTIFY_UNREAD_KEY) || '0', 10) || 0;
+    } catch(e) { _NOTIFY_UNREAD = 0; }
+}
+// 持久化历史与未读数（action.fn 无法序列化，仅存 label）
+function _saveNotifyHistory() {
+    try {
+        var serializable = _TOAST_HISTORY.map(function(it) {
+            return { msg: it.msg, type: it.type, ts: it.ts, actionLabel: (it.action && it.action.label) || null };
+        });
+        localStorage.setItem(_NOTIFY_KEY, JSON.stringify(serializable.slice(0, _TOAST_HISTORY_MAX)));
+        localStorage.setItem(_NOTIFY_UNREAD_KEY, String(_NOTIFY_UNREAD));
+    } catch(e) {}
+}
 function _archiveToast(msg, type, opts) {
-    var item = { msg: msg, type: type || 'info', ts: Date.now(), action: (opts && opts.action && opts.action.label) || null };
+    // 存储完整 action 对象（兼容 fn / handler 两种命名），保留 label + fn 供通知中心按钮回调
+    var actionObj = null;
+    if (opts && opts.action && opts.action.label) {
+        actionObj = { label: opts.action.label, fn: opts.action.fn || opts.action.handler || null };
+    }
+    var item = { msg: msg, type: type || 'info', ts: Date.now(), action: actionObj };
     _TOAST_HISTORY.unshift(item);
     if (_TOAST_HISTORY.length > _TOAST_HISTORY_MAX) _TOAST_HISTORY.length = _TOAST_HISTORY_MAX;
     // 错误/警告类记入未读，info/success 不打扰
     if (type === 'error' || type === 'warning') _NOTIFY_UNREAD++;
     _updateNotifyBadge();
+    _saveNotifyHistory();
 }
 function _updateNotifyBadge() {
     var badge = document.getElementById('notifyBadge');
@@ -778,6 +846,7 @@ function openNotifyPanel() {
     _openModal('notifyModal');
     _NOTIFY_UNREAD = 0;
     _updateNotifyBadge();
+    _saveNotifyHistory();
 }
 function _renderNotifyList() {
     var list = document.getElementById('notifyList');
@@ -790,12 +859,50 @@ function _renderNotifyList() {
     list.innerHTML = _TOAST_HISTORY.map(function(it) {
         var cls = 'notify-item notify-' + it.type;
         var ico = it.type === 'error' ? '⚠️' : (it.type === 'warning' ? '⚡' : (it.type === 'success' ? '✓' : 'ℹ'));
-        var actHtml = it.action ? '<button class="notify-action" type="button">' + esc(it.action) + '</button>' : '';
+        // it.action 现在是 { label, fn } 对象；兼容从 localStorage 恢复的 actionLabel 字符串
+        var actLabel = null;
+        if (it.action) {
+            actLabel = (typeof it.action === 'string') ? it.action : (it.action.label || null);
+        } else if (it.actionLabel) {
+            actLabel = it.actionLabel;
+        }
+        var actHtml = actLabel ? '<button class="notify-action" type="button">' + esc(actLabel) + '</button>' : '';
         return '<div class="' + cls + '">' +
             '<span class="notify-ico" aria-hidden="true">' + ico + '</span>' +
             '<div class="notify-body"><div class="notify-msg">' + esc(it.msg) + '</div>' +
             '<div class="notify-ts">' + _fmtTs(it.ts) + '</div></div>' +
             actHtml + '</div>';
     }).join('');
+    // 绑定 action 按钮 click 事件（修复死按钮 bug）
+    var btns = list.querySelectorAll('.notify-action');
+    btns.forEach(function(btn, i) {
+        var item = _TOAST_HISTORY[i];
+        if (!item || !item.action || !(item.action.fn || item.action.handler)) return;
+        var fn = item.action.fn || item.action.handler;
+        btn.addEventListener('click', function() {
+            try { fn(); } catch(e) {}
+        });
+    });
 }
+// 全部已读：清零未读数并持久化
+window._markAllRead = function() {
+    _NOTIFY_UNREAD = 0;
+    _updateNotifyBadge();
+    _saveNotifyHistory();
+};
+// 清空通知历史（base.html 中也有同名内联函数，此处为 main.js 统一实现）
+window._clearNotifyHistory = function() {
+    _TOAST_HISTORY.length = 0;
+    _NOTIFY_UNREAD = 0;
+    _saveNotifyHistory();
+    _updateNotifyBadge();
+    _renderNotifyList();
+};
 window._archiveToast = _archiveToast;
+// 页面加载时恢复历史与未读数
+_loadNotifyHistory();
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { _updateNotifyBadge(); });
+} else {
+    _updateNotifyBadge();
+}

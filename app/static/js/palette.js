@@ -6,6 +6,15 @@ window.TD_PALETTE = (function () {
     var isOpen = false;
     var selectedIdx = 0;
     var listEl = null, inputEl = null, overlayEl = null;
+    // 命令历史：记录最近 5 个执行过的命令，置顶展示
+    var _CMD_HISTORY = [];
+    var _CMD_HISTORY_KEY = 'td_cmd_history';
+    try { _CMD_HISTORY = JSON.parse(localStorage.getItem(_CMD_HISTORY_KEY) || '[]'); } catch(e) { _CMD_HISTORY = []; }
+    function _recordCmd(c) {
+        if (!c || !c.id) return;
+        _CMD_HISTORY = [c.id].concat(_CMD_HISTORY.filter(function(id){ return id !== c.id; })).slice(0, 5);
+        try { localStorage.setItem(_CMD_HISTORY_KEY, JSON.stringify(_CMD_HISTORY)); } catch(e) {}
+    }
 
     // 注册一条命令：{ id, label, group, ico, hint, run, keywords }
     function register(cmd) {
@@ -105,12 +114,37 @@ window.TD_PALETTE = (function () {
         return acts;
     }
 
-    function _all() {
+    // 最近执行的命令（从历史 id 反查完整命令对象）
+    function _historyCommands() {
+        if (!_CMD_HISTORY.length) return [];
         var recent = _recentCommands();
         var actions = _actionCommands();
         var navs = _navCommands();
-        // 拼装：最近访问（动态）→ 动作 → 导航 → 自定义
-        return recent.concat(actions).concat(navs).concat(registry);
+        var allCmds = recent.concat(actions).concat(navs).concat(registry);
+        var map = {};
+        allCmds.forEach(function (c) { map[c.id] = c; });
+        return _CMD_HISTORY.map(function (id) {
+            var c = map[id];
+            if (!c) return null;
+            return {
+                id: 'history_' + c.id,
+                label: c.label,
+                group: '最近执行',
+                ico: c.ico,
+                hint: c.hint || '',
+                keywords: c.keywords || c.label,
+                run: c.run
+            };
+        }).filter(Boolean);
+    }
+
+    function _all() {
+        var history = _historyCommands();
+        var recent = _recentCommands();
+        var actions = _actionCommands();
+        var navs = _navCommands();
+        // 拼装：最近执行 → 最近访问 → 动作 → 导航 → 自定义
+        return history.concat(recent).concat(actions).concat(navs).concat(registry);
     }
 
     // 模糊子序列匹配：输入 "tgldk" 命中 "ToolDelta"
@@ -124,6 +158,29 @@ window.TD_PALETTE = (function () {
             if (i >= q.length) return true;
         }
         return false;
+    }
+    // 打分函数：前缀匹配 > 包含匹配 > 子序列匹配（连续匹配加分）
+    function _score(q, text) {
+        q = (q || '').toLowerCase();
+        text = (text || '').toLowerCase();
+        if (!q) return 0;
+        if (text.indexOf(q) === 0) return 100; // 前缀匹配最高
+        if (text.indexOf(q) !== -1) return 60;  // 包含匹配
+        // 子序列匹配打分
+        var score = 0, qi = 0, consecutive = 0, firstMatch = true;
+        for (var j = 0; j < text.length && qi < q.length; j++) {
+            if (text.charAt(j) === q.charAt(qi)) {
+                score += 10;
+                if (consecutive > 0) score += 5 * consecutive; // 连续匹配加分
+                consecutive++;
+                if (firstMatch && j === 0) score += 15; // 首字符匹配加分
+                qi++;
+            } else {
+                consecutive = 0;
+            }
+            firstMatch = false;
+        }
+        return qi === q.length ? score : -1;
     }
 
     // 高亮匹配字符
@@ -148,13 +205,16 @@ window.TD_PALETTE = (function () {
     function _filter(q) {
         var all = _all();
         if (!q) return all;
-        var matched = [];
+        // 打分后按分数降序排列（前缀 > 包含 > 子序列）
+        var scored = [];
         for (var i = 0; i < all.length; i++) {
             var c = all[i];
             var hay = (c.label + ' ' + (c.keywords || '') + ' ' + (c.hint || '')).trim();
-            if (_fuzzy(q, hay)) matched.push(c);
+            var s = _score(q, hay);
+            if (s >= 0) { scored.push({ cmd: c, score: s }); }
         }
-        return matched;
+        scored.sort(function(a, b) { return b.score - a.score; });
+        return scored.map(function(x) { return x.cmd; });
     }
 
     function _group(results) {
@@ -174,6 +234,7 @@ window.TD_PALETTE = (function () {
         if (results.length === 0) {
             listEl.innerHTML = '<div class="palette-empty">未找到匹配的命令</div>';
             selectedIdx = 0;
+            _updateAriaActive();
             return;
         }
         selectedIdx = Math.min(selectedIdx, results.length - 1);
@@ -188,29 +249,26 @@ window.TD_PALETTE = (function () {
                 var sel = (flatIdx === selectedIdx) ? 'true' : 'false';
                 var label = _highlight(c.label, q);
                 var hint = c.hint ? '<span class="palette-hint">' + esc(c.hint) + '</span>' : '';
-                html += '<div class="palette-item" role="option" aria-selected="' + sel + '" data-idx="' + flatIdx + '">' +
+                html += '<div class="palette-item" id="palette-item-' + flatIdx + '" role="option" aria-selected="' + sel + '" data-idx="' + flatIdx + '">' +
                     '<span class="palette-ico" aria-hidden="true">' + esc(c.ico || '🔗') + '</span>' +
                     '<span class="palette-label">' + label + '</span>' + hint + '</div>';
                 flatIdx++;
             });
         });
         listEl.innerHTML = html;
-        // 绑定点击 + hover
-        var items = listEl.querySelectorAll('.palette-item');
-        items.forEach(function (it) {
-            it.addEventListener('mouseenter', function () {
-                var idx = parseInt(it.getAttribute('data-idx'), 10);
-                _setSelected(idx);
-            });
-            it.addEventListener('click', function () {
-                var idx = parseInt(it.getAttribute('data-idx'), 10);
-                _runIdx(results, idx);
-            });
-        });
         // 滚动选中项到可见区
         _scrollToSelected();
-        // 缓存 results 供键盘运行用
+        // 缓存 results 供键盘运行用（事件代理在 _ensureDOM 中统一绑定）
         listEl._results = results;
+        _updateAriaActive();
+    }
+
+    // 同步 aria-activedescendant 到当前选中项（供屏幕阅读器跟踪）
+    function _updateAriaActive() {
+        if (!inputEl || !listEl) return;
+        var sel = listEl.querySelector('.palette-item[aria-selected="true"]');
+        if (sel) inputEl.setAttribute('aria-activedescendant', sel.id || '');
+        else inputEl.removeAttribute('aria-activedescendant');
     }
 
     function _setSelected(idx) {
@@ -221,6 +279,7 @@ window.TD_PALETTE = (function () {
         items.forEach(function (it, i) { it.setAttribute('aria-selected', i === idx ? 'true' : 'false'); });
         selectedIdx = idx;
         _scrollToSelected();
+        _updateAriaActive();
     }
 
     function _scrollToSelected() {
@@ -231,6 +290,7 @@ window.TD_PALETTE = (function () {
     function _runIdx(results, idx) {
         if (!results || !results[idx]) return;
         var c = results[idx];
+        _recordCmd(c);
         _close();
         // 延迟一帧执行，避免与 _close 的焦点归还冲突
         setTimeout(function () {
@@ -262,22 +322,52 @@ window.TD_PALETTE = (function () {
         if (!overlayEl) return;
         inputEl = document.getElementById('paletteInput');
         listEl = document.getElementById('paletteList');
-        if (inputEl) {
+        if (inputEl && !inputEl._tdBound) {
+            // ARIA：声明为 combobox，关联 listbox
+            inputEl.setAttribute('role', 'combobox');
+            inputEl.setAttribute('aria-expanded', 'true');
+            inputEl.setAttribute('aria-controls', 'paletteList');
+            inputEl.setAttribute('aria-autocomplete', 'list');
+            // 输入防抖 50ms，避免快速输入时频繁重渲染
+            var _inputTimer = null;
             inputEl.addEventListener('input', function () {
-                selectedIdx = 0;
-                _render();
+                clearTimeout(_inputTimer);
+                _inputTimer = setTimeout(function () {
+                    selectedIdx = 0;
+                    _render();
+                }, 50);
             });
-            // 阻止输入时 Cmd+K 再次触发关闭
-            inputEl.addEventListener('keydown', function (e) { e.stopPropagation(); });
+            // 只阻止字母输入冒泡，允许 Cmd+K / Esc 冒泡到 _onKeydown
+            inputEl.addEventListener('keydown', function (e) {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) return;
+                if (e.key === 'Escape') return;
+                e.stopPropagation();
+            });
+            inputEl._tdBound = true;
         }
-        if (listEl) {
-            listEl.addEventListener('mousemove', function () {});
+        if (listEl && !listEl._tdBound) {
+            // 事件代理：mouseover 高亮 + click 执行（替代每项单独绑定）
+            listEl.addEventListener('mouseover', function (e) {
+                var item = e.target.closest && e.target.closest('.palette-item');
+                if (!item) return;
+                var idx = parseInt(item.getAttribute('data-idx'), 10);
+                _setSelected(idx);
+            });
+            listEl.addEventListener('click', function (e) {
+                var item = e.target.closest && e.target.closest('.palette-item');
+                if (!item) return;
+                var idx = parseInt(item.getAttribute('data-idx'), 10);
+                var results = (listEl && listEl._results) || [];
+                _runIdx(results, idx);
+            });
+            listEl._tdBound = true;
         }
-        if (overlayEl) {
+        if (overlayEl && !overlayEl._tdBound) {
             // 点击空白背景关闭
             overlayEl.addEventListener('click', function (e) {
                 if (e.target === overlayEl) _close();
             });
+            overlayEl._tdBound = true;
         }
     }
 
@@ -305,6 +395,23 @@ window.TD_PALETTE = (function () {
             e.preventDefault();
             _setSelected(Math.max(selectedIdx - 1, 0));
             return;
+        }
+        if (e.key === 'Home') {
+            e.preventDefault(); _setSelected(0); return;
+        }
+        if (e.key === 'End') {
+            e.preventDefault();
+            var endRes = (listEl && listEl._results) || [];
+            _setSelected(endRes.length - 1); return;
+        }
+        if (e.key === 'PageUp') {
+            e.preventDefault();
+            _setSelected(Math.max(0, selectedIdx - 5)); return;
+        }
+        if (e.key === 'PageDown') {
+            e.preventDefault();
+            var pdRes = (listEl && listEl._results) || [];
+            _setSelected(Math.min(pdRes.length - 1, selectedIdx + 5)); return;
         }
         if (e.key === 'Enter' || e.keyCode === 13) {
             e.preventDefault();
@@ -346,11 +453,9 @@ window.TD_PALETTE = (function () {
             var overlay = document.createElement('div');
             overlay.className = 'modal-overlay';
             overlay.id = 'cmdPalette';
-            overlay.setAttribute('role', 'dialog');
-            overlay.setAttribute('aria-modal', 'true');
-            overlay.setAttribute('aria-label', '命令面板');
+            overlay.setAttribute('role', 'presentation');
             overlay.innerHTML =
-                '<div class="palette-box">' +
+                '<div class="palette-box" role="dialog" aria-modal="true" aria-label="命令面板">' +
                 '<div class="palette-input-wrap">' +
                 '<input type="text" id="paletteInput" class="palette-input" placeholder="输入命令或搜索…" autocomplete="off" spellcheck="false" aria-label="搜索命令">' +
                 '</div>' +
@@ -362,10 +467,6 @@ window.TD_PALETTE = (function () {
                 if (e.target === overlay) _close();
             });
             _ensureDOM();
-            if (inputEl) {
-                inputEl.addEventListener('input', function () { selectedIdx = 0; _render(); });
-                inputEl.addEventListener('keydown', function (e) { e.stopPropagation(); });
-            }
         }
         // 悬浮触发按钮（仅移动端显示）
         var trigger = document.getElementById('paletteTrigger');

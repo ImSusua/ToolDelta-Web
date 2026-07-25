@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% set active_page = "backup" %}
 {% block content %}
+<style>
+/* 备份项移动端堆叠：窄屏下名称与操作按钮纵向排列，操作区占满宽度 */
+@media (max-width: 600px) {
+    .backup-item { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .backup-actions { width: 100%; }
+    .backup-actions .btn { flex: 1; }
+}
+</style>
 <div class="page-header">
     <h1>备份与恢复</h1>
     <div>
@@ -25,39 +33,71 @@ function _esc(s) {
     });
 }
 
+// 友好的文件大小格式化（覆盖 B/KB/MB/GB，避免一律按 KB 显示）
+function fmtSize(b){
+    b = Number(b) || 0;
+    if(b < 1024) return b + ' B';
+    if(b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if(b < 1073741824) return (b/1048576).toFixed(2) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+}
+
 function loadBackups() {
+    var container = document.getElementById('backupList');
+    // 加载态：骨架屏（renderState 缺失时回退到空 innerHTML 等待）
+    if (container && window.renderState) renderState(container, 'skeleton', {count: 3});
     fetch('/api/backups')
         .then(function(r) { return r.json(); })
         .then(function(backups) {
-            var container = document.getElementById('backupList');
+            if (!container) return;
             if (!backups || backups.length === 0) {
-                container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">💾</div>暂无备份，点击「创建备份」生成第一份。</div>';
+                if (window.renderState) {
+                    renderState(container, 'empty', {
+                        icon: '💾', title: '暂无备份',
+                        hint: '点击「创建备份」生成第一份',
+                        cta: '创建备份', ctaFn: createBackup
+                    });
+                } else {
+                    container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">💾</div>暂无备份，点击「创建备份」生成第一份。</div>';
+                }
                 return;
             }
             // 名称、zip 均转义；onclick 用 JSON.stringify + _esc 双重保险，防止引号闭合
             container.innerHTML = backups.map(function(b) {
                 var zipAttr = _esc(JSON.stringify(b.zip));
+                var nameAttr = _esc(b.name);
                 return '<div class="backup-item">' +
-                    '<div><strong>' + _esc(b.name) + '</strong>' +
-                    '<div class="backup-meta">' + _esc(b.time) + ' | ' + (b.size / 1024).toFixed(1) + ' KB</div></div>' +
+                    '<div><strong>' + nameAttr + '</strong>' +
+                    '<div class="backup-meta">' + _esc(b.time) + ' | ' + fmtSize(b.size) + '</div></div>' +
                     '<div class="backup-actions">' +
-                    '<button class="btn btn-sm btn-primary" onclick="restoreBackup(' + zipAttr + ')">还原</button>' +
-                    '<button class="btn btn-sm btn-danger" onclick="deleteBackup(' + zipAttr + ')">删除</button></div></div>';
+                    '<button class="btn btn-sm btn-primary" aria-label="还原备份 ' + nameAttr + '" onclick="restoreBackup(' + zipAttr + ', this)">还原</button>' +
+                    '<button class="btn btn-sm btn-danger" aria-label="删除备份 ' + nameAttr + '" onclick="deleteBackup(' + zipAttr + ', this)">删除</button></div></div>';
             }).join('');
         })
-        .catch(function() { showToast('加载备份列表失败', 'error'); });
+        .catch(function() {
+            // 失败不再静默：列表区显示错误态 + 重试按钮
+            if (container && window.renderState) {
+                renderState(container, 'error', { message: '加载备份失败', retry: loadBackups });
+            } else {
+                container.innerHTML = '<div class="empty-state empty-state-error" role="alert"><div class="icon">⚠</div><div class="empty-title">加载备份失败</div><button class="btn btn-outline btn-sm" onclick="loadBackups()">重试</button></div>';
+            }
+        });
 }
 
 function createBackup() {
-    // 使用项目自定义 prompt 弹窗（替代浏览器原生 prompt，移动端体验更一致）
-    showPrompt('备份名称（可选）：', '例如：daily-backup', '', function(name) {
+    // 默认名 backup_YYYY-MM-DD_HHMM，用户可清空后自定义
+    var def = 'backup_' + new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
+    showPrompt('备份名称（可选）：', '例如：daily-backup', def, function(name) {
         if (name === null) return; // 用户取消
+        if (name && /[\\/:*?"<>|]/.test(name)) {
+            showToast('名称包含非法字符 / \\ : * ? " < > |', 'error'); return;
+        }
         var btn = document.getElementById('btnCreate');
         if (btn) { btn.disabled = true; btn.textContent = '备份中...'; }
         fetch('/api/backup/create', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name: name || undefined}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.success) { showToast('备份创建成功: ' + d.name, 'success'); loadBackups(); }
+                if (d && d.success) { showToast('备份创建成功: ' + d.name, 'success'); loadBackups(); }
                 else { showToast('备份创建失败: ' + (d.error || '未知错误'), 'error'); }
             })
             .catch(function() { showToast('备份创建失败', 'error'); })
@@ -65,33 +105,41 @@ function createBackup() {
     });
 }
 
-function restoreBackup(zip) {
+function restoreBackup(zip, btn) {
     showConfirm('确定还原此备份？当前数据将被覆盖。建议先创建备份。', function(ok) {
         if (!ok) return;
+        // 操作中禁用按钮 + 进度提示，防止重复点击触发多次还原
+        var origText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '还原中...'; }
         fetch('/api/backup/restore', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({zip: zip}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                showToast(d.success ? '还原成功' : '还原失败: ' + (d.message || d.error || ''), d.success ? 'success' : 'error');
-                if (d.success) loadBackups(); // 还原成功后刷新列表
+                showToast(d && d.success ? '还原成功' : '还原失败: ' + (d.message || d.error || ''), d && d.success ? 'success' : 'error');
+                if (d && d.success) loadBackups(); // 还原成功后刷新列表
             })
-            .catch(function() { showToast('还原请求失败', 'error'); });
+            .catch(function() { showToast('还原请求失败', 'error'); })
+            .finally(function() { if (btn) { btn.disabled = false; btn.textContent = origText; } });
     }, true);
 }
 
-function deleteBackup(zip) {
+function deleteBackup(zip, btn) {
     showConfirm('确定删除此备份？', function(ok) {
         if (!ok) return;
+        var origText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; }
         fetch('/api/backup/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({zip: zip}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.success) { showToast('已删除', 'info'); loadBackups(); }
+                if (d && d.success) { showToast('已删除', 'info'); loadBackups(); }
                 else { showToast('删除失败: ' + (d.error || ''), 'error'); }
             })
-            .catch(function() { showToast('删除请求失败', 'error'); });
+            .catch(function() { showToast('删除请求失败', 'error'); })
+            .finally(function() { if (btn) { btn.disabled = false; btn.textContent = origText; } });
     });
 }
 
 function showFactoryReset() {
+    // 两次确认均标红（danger=true），强化风险提示
     showConfirm('确定恢复出厂设置？这将清空所有插件、配置和数据！建议先创建备份。', function(ok) {
         if (!ok) return;
         showConfirm('再次确认：此操作不可撤销！', function(ok2) {
@@ -99,12 +147,12 @@ function showFactoryReset() {
             fetch('/api/reset', { method:'POST' })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
-                    if (d.success) { showToast('已恢复出厂设置', 'success'); loadBackups(); }
+                    if (d && d.success) { showToast('已恢复出厂设置', 'success'); loadBackups(); }
                     else { showToast('恢复出厂设置失败: ' + (d.error || ''), 'error'); }
                 })
                 .catch(function() { showToast('恢复出厂设置失败', 'error'); });
         }, true);
-    });
+    }, true);
 }
 
 loadBackups();

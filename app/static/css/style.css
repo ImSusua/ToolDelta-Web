@@ -50,6 +50,18 @@
   --accent-hover: var(--primary-hover);
   --surface: var(--surface-1);
   --border: var(--hairline);
+
+  /* spacing scale */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  /* typography scale */
+  --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
+  --text-lg: 16px; --text-xl: 18px; --text-2xl: 22px; --text-3xl: 28px;
+  /* z-index scale */
+  --z-base: 0; --z-dropdown: 100; --z-sticky: 200; --z-overlay: 900;
+  --z-modal: 999; --z-toast: 9999; --z-progress: 10000; --z-skip: 10001;
+  /* duration */
+  --duration-fast: 0.12s; --duration-base: 0.2s; --duration-slow: 0.3s;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -60,6 +72,7 @@ body {
   color: var(--ink);
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -215,6 +228,7 @@ pre { white-space: pre-wrap; word-break: break-all; }
 
 .sidebar nav {
   padding: 8px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   flex: 1;
 }
 .sidebar nav a {
@@ -243,6 +257,7 @@ pre { white-space: pre-wrap; word-break: break-all; }
   flex: 1;
   padding: 24px 24px;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .page-header {
@@ -307,7 +322,7 @@ pre { white-space: pre-wrap; word-break: break-all; }
 /* 卡片 hover 微交互：轻微上浮 + 阴影增强，参考 core-stack-org 150-250ms 微交互。
    仅在 hover-capable 设备启用，触屏设备避免残留状态。 */
 @media (hover: hover) {
-  .stat-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+  a.stat-card:hover, .stat-card.is-clickable:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
   .plugin-card:hover { transform: translateY(-1px); }
 }
 .stat-card .stat-header {
@@ -570,6 +585,7 @@ tr:hover td { background: var(--surface-2); }
 
 .toast-container {
   position: fixed; top: 20px; right: 20px; z-index: 9999;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .toast {
@@ -1193,10 +1209,20 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
   --ink-muted: #3a4150;
   /* 浅色主题：原生控件跟随 */
   color-scheme: light;
-  --ink-subtle: #6b7280;
-  --ink-tertiary: #9aa3b2;
+  /* 覆盖 primary 系列以满足 WCAG AA（白底对比度 ≥4.5:1）：
+     原 --primary-hover: #828fff 在白底仅约 2.8:1，不达标。 */
+  --primary: #4a51c8;
+  --primary-hover: #3d44b0;
+  --primary-focus: #4a51c8;
+  --ink-tertiary: #5b6573;
+  --ink-subtle: #6a7280;
   --hairline: #dde2ea;
   --hairline-strong: #c8cfdb;
+  --grad-primary: linear-gradient(135deg, #4a51c8, #5e6ad2 55%, #6b73d8);
+  --shadow-sm: 0 1px 2px rgba(20,30,60,0.08);
+  --shadow-md: 0 4px 12px rgba(20,30,60,0.10);
+  --shadow-lg: 0 8px 24px rgba(20,30,60,0.12);
+  --shadow-glow: 0 0 0 3px rgba(74,81,200,0.18);
   /* 浅色主题下控制台仍保持深色（ANSI 调色板面向深色背景设计），
      这些变量不覆盖，沿用 :root 默认值，确保深浅主题下控制台一致可读 */
 }
@@ -1362,17 +1388,16 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
 
 ::selection { background: rgba(94, 106, 210, 0.38); color: #fff; }
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-/* 纯触屏设备（无键盘/鼠标）：移除 focus-visible outline，避免误触残留焦点环 */
+/* 触屏设备保留 focus 但用更柔和的样式，避免残留蓝框（WCAG 2.4.7：不可移除焦点指示） */
 @media (hover: none) and (pointer: coarse) {
-  :focus-visible { outline: none; }
-  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 }
-/* 尊重用户「减少动态」偏好：关闭非必要动画 */
+/* 尊重用户「减少动态」偏好：关闭非必要动画（统一 0.001ms） */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
 }
@@ -1487,8 +1512,8 @@ body, .card, .console-wrap, .stat-card, .sidebar, input, select, textarea,
   transition: opacity 0.3s var(--ease);
   pointer-events: none;
 }
-.stat-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-glow); }
-.stat-card:hover::after { opacity: 1; }
+a.stat-card:hover, .stat-card.is-clickable:hover { transform: translateY(-4px); box-shadow: var(--shadow-glow); }
+a.stat-card:hover::after, .stat-card.is-clickable:hover::after { opacity: 1; }
 .stat-card .icon {
   display: inline-flex;
   align-items: center; justify-content: center;
@@ -1762,8 +1787,9 @@ a { transition: color .15s; }
 .sidebar nav a.active::before { transform: translateY(-50%) scaleY(1); }
 
 /* ─── 卡片 / 统计卡 hover 抬升 + 阴影 ─── */
+/* 仅交互式统计卡（链接或显式标记 is-clickable）才抬升，避免非交互卡片误发可点击信号 */
 .stat-card { transition: transform .18s var(--ease), border-color .18s, box-shadow .18s; }
-.stat-card:hover {
+a.stat-card:hover, .stat-card.is-clickable:hover {
   transform: translateY(-3px);
   border-color: var(--hairline-strong);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.38);
@@ -1779,14 +1805,7 @@ body, .sidebar, .card, .stat-card, .console-wrap, .modal, .dep-card, .onb-card {
 @keyframes toastIn { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .toast { animation: toastIn .26s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
 
-/* ─── 尊重「减少动态效果」系统偏好 ─── */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .001ms !important;
-  }
-}
+/* ─── 尊重「减少动态效果」系统偏好：统一规则已在上文 :root 后定义，此处不再重复 ─── */
 
 /* ════════════════════════════════════════════════════════════════
    UI v4 — 密码强度指示器 + 统一表单样式（GitHub 风格）
@@ -1863,10 +1882,19 @@ label.form-label {
 
 /* ─── 危险卡片：边框强调（settings.html 危险操作区） ─── */
 .card-danger {
-  border-color: rgba(229, 72, 77, 0.4) !important;
+  border-color: var(--danger) !important;
   background: rgba(229, 72, 77, 0.04);
 }
 .card-danger .card-title { color: #ff7a7e; }
+/* 危险区标题：⚠ 图标 + 危险色加粗，强化视觉警示 */
+.card-danger .card-danger-title {
+  color: var(--danger);
+  font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+.card-danger .card-danger-title::before {
+  content: '⚠'; font-size: 16px;
+}
 
 /* ─── 横向工具栏：search-bar 增强 ─── */
 .search-bar select,
@@ -2267,7 +2295,7 @@ select[aria-invalid="true"] {
 }
 .palette-trigger {
   position: fixed;
-  right: 16px; bottom: 16px;
+  right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   width: 44px; height: 44px;
   border-radius: 50%;
   background: var(--primary);
@@ -2311,6 +2339,32 @@ select[aria-invalid="true"] {
 .copy-btn.copied {
   color: var(--success);
   border-color: var(--success);
+}
+
+/* ─── 密码可见性切换按钮（参考 GitHub / Linear 登录页） ─── */
+.pw-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 12px;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: var(--r-xs);
+  transition: color .12s;
+}
+.pw-toggle:hover { color: var(--ink); }
+.pw-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+/* 输入框内绝对定位的切换按钮（connections 模态场景） */
+.input-with-toggle { position: relative; }
+.input-with-toggle .pw-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* ─── 表格 sticky 表头（参考 shadcn DataTable / TanStack Table） ─── */
@@ -2516,4 +2570,37 @@ a.btn:hover { transform: translateY(-1px); }
 [data-theme="light"] .shortcut-keys kbd {
   background: var(--surface-1);
   border-color: var(--hairline-strong);
+}
+
+/* ─── 日志分级配色（参考 GitHub Primer / Vercel runtime logs） ─── */
+.log-line { padding: 2px 12px; border-left: 2px solid transparent; font-family: 'Cascadia Code','Fira Code','Consolas',monospace; font-size: 12px; line-height: 1.6; word-break: break-all; }
+.log-line:hover { background: var(--surface-2); }
+.line-err, .log-line-error { color: var(--danger); border-left-color: var(--danger); background: rgba(229,72,77,0.06); }
+.line-warn, .log-line-warning { color: var(--warning); border-left-color: var(--warning); background: rgba(245,166,35,0.06); }
+.line-output { color: var(--ink-muted); }
+.line-system { color: var(--ink-subtle); font-style: italic; }
+[data-theme="light"] .line-err, [data-theme="light"] .log-line-error { background: rgba(229,72,77,0.08); }
+[data-theme="light"] .line-warn, [data-theme="light"] .log-line-warning { background: rgba(245,166,35,0.08); }
+
+/* ════════════════════════════════════════════════════════════════
+   P0 修复补充：触摸目标最小尺寸 + 路径等宽样式
+   ════════════════════════════════════════════════════════════════ */
+
+/* 移动端触摸目标：小屏至少 40px，避免误触（WCAG 2.5.5） */
+@media (max-width: 768px) {
+  .btn-sm { min-height: 40px; min-width: 40px; }
+  .notify-toggle, .theme-toggle { width: 40px; height: 40px; }
+  .copy-btn { min-height: 36px; min-width: 36px; padding: 6px 10px; }
+}
+/* 触屏设备（无 hover）：触摸目标最小 44×44px（Material Design / Apple HIG） */
+@media (hover: none) and (pointer: coarse) {
+  .btn-sm, .notify-toggle, .theme-toggle, .copy-btn { min-height: 44px; min-width: 44px; }
+}
+
+/* ─── 等宽路径文本：系统信息目录等长路径，自动换行不溢出 ─── */
+.path-mono {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }

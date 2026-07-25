@@ -1,9 +1,9 @@
 // 控制台交互：命令发送 + 历史回溯(↑/↓) + Tab 自动补全(基于命令库) + 收藏快捷发送
 // socket 重连配置：指数退避，避免移动端弱网下高频重连耗电
 var socket = io({
-    transports: ['polling'],
+    transports: ['websocket', 'polling'],  // websocket 优先，降级 polling（弱网更稳）
     reconnection: true,
-    reconnectionAttempts: Infinity,   // 持续重连（用户手动离开页面时连接自然关闭）
+    reconnectionAttempts: 20,              // 上限 20 次，避免无限重连耗电；超限后由 manualReconnect 兜底
     reconnectionDelay: 1000,          // 首次重连 1s
     reconnectionDelayMax: 10000,     // 退避上限 10s
     reconnectionJitter: 0.5          // 抖动 50%，避免多客户端同步重连压垮服务器
@@ -74,9 +74,10 @@ function _flushBatch() {
     _batchBuffer = null;
     _batchPending = null;
     body.appendChild(frag);
-    // 行数上限：保留最近 1000 行
+    // 行数上限：保留最近 1000 行。批量移除 50 行（而非逐行移除），减少 reflow 次数
     while (body.children.length > 1000) {
-        body.removeChild(body.firstChild);
+        var removeCount = Math.min(50, body.children.length - 1000);
+        for (var i = 0; i < removeCount; i++) body.removeChild(body.firstChild);
     }
     if (info.atBottom) {
         body.scrollTop = body.scrollHeight;
@@ -89,6 +90,8 @@ function _flushBatch() {
 }
 
 var _sendingCmd = false;
+// 命令队列：替代原 120ms 硬锁（硬锁会丢弃连发命令），改为入队 + 100ms 间隔串行 flush
+var _cmdQueue = [];
 
 // 供移动端「发送」按钮调用：读取输入框并发送
 function sendConsoleInput() {
@@ -108,13 +111,21 @@ function sendCommand(cmd) {
         appendLine('<span class="c-err">⚠ 未连接到服务器，命令未发送。请等待重连后重试。</span>');
         return;
     }
-    // 防连点/连发：命令发送间隔过短时忽略（P2-7）
-    if (_sendingCmd) return;
-    _sendingCmd = true;
-    setTimeout(function () { _sendingCmd = false; }, 120);
+    // echo 与历史保存立即执行（即时反馈）；实际 emit 入队串行发送，避免连发丢失
     appendLine('<span class="c-cmd">$ ' + escapeHtml(cmd) + '</span>');
-    socket.emit('console_command', cmd);
     saveHistory(cmd);
+    _cmdQueue.push(cmd);
+    _flushCmdQueue();
+}
+
+// 串行 flush 命令队列：每条命令间隔 100ms，避免服务端突发拥塞
+function _flushCmdQueue() {
+    if (_sendingCmd) return;
+    if (_cmdQueue.length === 0) return;
+    var cmd = _cmdQueue.shift();
+    _sendingCmd = true;
+    socket.emit('console_command', cmd);
+    setTimeout(function () { _sendingCmd = false; _flushCmdQueue(); }, 100);
 }
 
 function moveCursorEnd(el) { setTimeout(function () { el.selectionStart = el.selectionEnd = el.value.length; }, 0); }
@@ -188,15 +199,25 @@ fetch('/api/commands')
         appendLine('<span class="c-hint">ℹ 命令补全库加载失败，Tab 补全不可用</span>');
     });
 
+// 输入框默认 placeholder（断开时改为「未连接...」，连接恢复时还原）
+var _INPUT_PLACEHOLDER = '输入命令...（↑/↓ 翻历史，Tab 补全）';
 socket.on('connect', function () {
     if (statusEl) { statusEl.textContent = '已连接'; statusEl.className = 'status-conn connected'; }
     var bar = document.querySelector('.console-bar');
     if (bar) bar.classList.add('is-connected');
+    // 连接恢复：启用发送按钮 + 还原 placeholder
+    var sendBtn = document.getElementById('console-send-btn');
+    if (sendBtn) sendBtn.disabled = false;
+    if (input) input.placeholder = _INPUT_PLACEHOLDER;
 });
 socket.on('disconnect', function () {
     if (statusEl) { statusEl.textContent = '已断开'; statusEl.className = 'status-conn disconnected'; }
     var bar = document.querySelector('.console-bar');
     if (bar) bar.classList.remove('is-connected');
+    // 断开时禁用发送按钮 + 提示未连接，避免用户继续输入被静默丢弃
+    var sendBtn = document.getElementById('console-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    if (input) input.placeholder = '未连接...';
 });
 // 移动端弱网：重连尝试提示（带尝试次数显示）
 // 弱网下 connect_error 高频触发，对 statusEl 的 DOM 更新做节流，避免每秒多次重排
@@ -237,7 +258,29 @@ socket.on('reconnect', function () {
     if (_reconnShown) { _reconnShown = false; showToast('已重新连接', 'success'); }
     _reconnAttempts = 0;
 });
-socket.on('console_output', function (data) { appendLine(data.data_html || data.data || ''); });
+// 重连 20 次仍失败：停止自动重连，提供「重试」按钮供用户手动恢复
+socket.io.on('reconnect_failed', function () {
+    if (statusEl) statusEl.innerHTML = '连接失败 <button class="btn btn-sm btn-outline" onclick="manualReconnect()">重试</button>';
+    var sendBtn = document.getElementById('console-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    if (input) input.placeholder = '未连接...';
+});
+function manualReconnect() { if (window.socket) socket.connect(); }
+
+// console_output 批处理：50ms 内的多次输出合并为一次 flush，减少高频刷屏时的 reflow
+var _outputBuffer = [];
+var _outputTimer = null;
+socket.on('console_output', function (data) {
+    _outputBuffer.push(data);
+    if (!_outputTimer) {
+        _outputTimer = setTimeout(function () {
+            var lines = _outputBuffer;
+            _outputBuffer = [];
+            _outputTimer = null;
+            lines.forEach(function (d) { appendLine(d.data_html || d.data || ''); });
+        }, 50);
+    }
+});
 
 // 新消息提示：用户向上滚动时累计未读消息数，显示 pill
 var _newMsgCount = 0;

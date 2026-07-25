@@ -7,10 +7,41 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
         body.auth-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; position: relative; }
+        /* 主题选择按钮选中态（aria-pressed=true） */
+        .theme-pick[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: rgba(94,106,210,0.12); }
+        /* 测试连接结果文本 */
+        #connTestResult { color: var(--ink-subtle); }
     </style>
+    <script>
+      /* ── 主题初始化：与 base.html 统一使用 td_theme_v2 键 + data-theme 属性，支持 system ── */
+      (function () {
+        var KEY = 'td_theme_v2';
+        var mode = 'dark';
+        try { mode = localStorage.getItem(KEY) || 'dark'; } catch (e) {}
+        // 兼容旧键 td_theme 迁移
+        if (mode === 'dark') {
+          try { var old = localStorage.getItem('td_theme'); if (old === 'light') { mode = 'light'; localStorage.setItem(KEY, 'light'); } } catch (e) {}
+        }
+        if (mode !== 'dark' && mode !== 'light' && mode !== 'system') mode = 'dark';
+        window._tdThemeMode = mode;
+        function applyTheme(m) {
+          var actual = m;
+          if (m === 'system') actual = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', actual);
+          document.documentElement.style.setProperty('color-scheme', actual);
+        }
+        window._tdApplyTheme = applyTheme;
+        applyTheme(mode);
+        // 系统主题变化时若用户选 system 则跟随
+        if (window.matchMedia) {
+          window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+            try { if ((localStorage.getItem(KEY) || 'dark') === 'system') applyTheme('system'); } catch (e) {}
+          });
+        }
+      })();
+    </script>
 </head>
 <body class="auth-page">
-    <script>(function(){ if (localStorage.getItem('td_theme') === 'light') document.body.classList.add('theme-light'); })();</script>
     <script src="/static/js/wallpaper.js"></script>
 
     <div class="onb-overlay">
@@ -22,7 +53,7 @@
                 <div class="onb-step" data-step="4"><span class="dot">4</span><span class="lbl">外观</span></div>
                 <div class="onb-step" data-step="5"><span class="dot">5</span><span class="lbl">完成</span></div>
             </div>
-            <div class="onb-progress"><div class="bar" id="onbBar"></div></div>
+            <div class="onb-progress" role="progressbar" aria-valuenow="1" aria-valuemin="1" aria-valuemax="5" aria-label="初始化进度"><div class="bar" id="onbBar"></div></div>
             <div class="onb-panel" id="onbPanel"></div>
             <div class="onb-actions" id="onbActions"></div>
         </div>
@@ -30,10 +61,12 @@
 
     <script>
         var STEP = 1, TOTAL = 5;
-        var data = { username: '', password: '', host: '', port: '' };
+        // 密码仅在内存中暂存（pendingPw），不写入 data 对象 / 不进入 innerHTML
+        var pendingPw = null;
+        var data = { username: '', host: '', port: '' };
 
         function esc(s) {
-            return (s || '').replace(/[&<>"']/g, function (c) {
+            return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) {
                 return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
             });
         }
@@ -45,7 +78,10 @@
                 el.classList.toggle('active', s === n);
                 el.classList.toggle('done', s < n);
             });
-            document.getElementById('onbBar').style.width = (n / TOTAL * 100) + '%';
+            var bar = document.getElementById('onbBar');
+            if (bar) bar.style.width = (n / TOTAL * 100) + '%';
+            var progress = document.querySelector('.onb-progress');
+            if (progress) progress.setAttribute('aria-valuenow', n);
             render();
         }
 
@@ -55,8 +91,10 @@
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'onbErr';
+                el.setAttribute('role', 'alert');
+                el.setAttribute('aria-live', 'assertive');
                 el.style.cssText = 'color:#f87171;font-size:13px;text-align:center;margin-top:14px';
-                panel.appendChild(el);
+                if (panel) panel.appendChild(el);
             }
             el.textContent = msg;
         }
@@ -100,42 +138,51 @@
             } else if (STEP === 2) {
                 panel.innerHTML = '<h2>管理员账号</h2>' +
                     '<p class="sub">设置用于登录管理面板的账号与密码（首次初始化必需，弱密码仅提示不阻止创建）。</p>' +
-                    '<div class="form-group"><label>用户名</label><input type="text" id="username" name="username" autocomplete="username" enterkeyhint="next" placeholder="设置用户名（支持中文，1-32位）" value="' + esc(data.username) + '"></div>' +
-                    '<div class="form-group"><label>密码</label><input type="password" id="password" name="new-password" autocomplete="new-password" enterkeyhint="next" placeholder="设置密码（1-64 位，建议8位以上）" value="' + esc(data.password) + '" oninput="renderPwStrength(this.value)"></div>' +
+                    '<div class="form-group"><label for="username">用户名</label><input type="text" id="username" name="username" autocomplete="username" enterkeyhint="next" placeholder="设置用户名（支持中文，1-32位）" aria-describedby="onbErr" value="' + esc(data.username) + '"></div>' +
+                    '<div class="form-group"><label for="password">密码</label><input type="password" id="password" name="new-password" autocomplete="new-password" enterkeyhint="next" placeholder="设置密码（1-64 位，建议8位以上）" aria-describedby="onbErr" oninput="renderPwStrength(this.value)"></div>' +
                     '<div id="pwStrengthBox" class="pw-strength-box" style="display:none"></div>' +
-                    '<div class="form-group"><label>确认密码</label><input type="password" id="password2" name="new-password-confirm" autocomplete="new-password" enterkeyhint="done" placeholder="再次输入密码"></div>';
+                    '<div class="form-group"><label for="password2">确认密码</label><input type="password" id="password2" name="new-password-confirm" autocomplete="new-password" enterkeyhint="done" placeholder="再次输入密码" aria-describedby="onbErr"></div>';
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(1)">← 上一步</button><button class="btn btn-primary" onclick="nextAdmin()">下一步 →</button>';
-                // 若已有密码，立即渲染一次强度指示
-                setTimeout(function(){ if (data.password) renderPwStrength(data.password); }, 0);
+                // 密码不写入 HTML 属性，改用 DOM API 回填
+                setTimeout(function () {
+                    var pwInput = document.getElementById('password');
+                    if (pwInput && pendingPw) { pwInput.value = pendingPw; renderPwStrength(pendingPw); }
+                }, 0);
             } else if (STEP === 3) {
                 panel.innerHTML = '<h2>服务器连接（可选）</h2>' +
                     '<p class="sub">填写你的 Minecraft 服务器地址，初始化后即可一键连接；也可稍后在「服务器连接」中配置。</p>' +
-                    '<div class="form-group"><label>服务器地址</label><input type="text" id="host" placeholder="例如 127.0.0.1 或 play.example.com" value="' + esc(data.host) + '"></div>' +
-                    '<div class="form-group"><label>端口</label><input type="number" id="port" placeholder="例如 19132" value="' + esc(data.port) + '"></div>';
+                    '<div class="form-group"><label for="host">服务器地址</label><input type="text" id="host" name="host" enterkeyhint="next" placeholder="例如 127.0.0.1 或 play.example.com" aria-describedby="onbErr" value="' + esc(data.host) + '"></div>' +
+                    '<div class="form-group"><label for="port">端口</label><input type="text" id="port" name="port" inputmode="numeric" pattern="[0-9]*" enterkeyhint="next" placeholder="例如 19132" aria-describedby="onbErr" value="' + esc(data.port) + '"></div>' +
+                    '<div class="form-group"><button type="button" class="btn btn-outline btn-sm" onclick="testSetupConn(this)">测试连接</button> <span id="connTestResult" style="font-size:13px;margin-left:8px"></span></div>';
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(2)">← 上一步</button><button class="btn btn-outline" onclick="nextConn(true)">跳过</button><button class="btn btn-primary" onclick="nextConn(false)">下一步 →</button>';
             } else if (STEP === 4) {
+                var cur = _curTheme();
                 panel.innerHTML = '<h2>外观偏好</h2>' +
-                    '<p class="sub">选择深色 / 浅色主题，并预览随机背景壁纸。</p>' +
+                    '<p class="sub">选择深色 / 浅色 / 跟随系统主题，并预览随机背景壁纸。</p>' +
                     '<div style="display:flex;gap:10px;margin-bottom:6px;flex-wrap:wrap">' +
-                    '<button class="btn btn-outline" onclick="setTheme(\'dark\')">🌑 深色</button>' +
-                    '<button class="btn btn-outline" onclick="setTheme(\'light\')">☀️ 浅色</button>' +
-                    '<button class="btn btn-outline" onclick="if(window.TDWallpaper)TDWallpaper.next()">🎲 换一张壁纸</button></div>';
+                    '<button class="btn btn-outline theme-pick" data-theme-val="dark" onclick="setTheme(\'dark\')" aria-pressed="' + (cur === 'dark' ? 'true' : 'false') + '"><span class="ico" aria-hidden="true">🌑</span> 深色</button>' +
+                    '<button class="btn btn-outline theme-pick" data-theme-val="light" onclick="setTheme(\'light\')" aria-pressed="' + (cur === 'light' ? 'true' : 'false') + '"><span class="ico" aria-hidden="true">☀️</span> 浅色</button>' +
+                    '<button class="btn btn-outline theme-pick" data-theme-val="system" onclick="setTheme(\'system\')" aria-pressed="' + (cur === 'system' ? 'true' : 'false') + '"><span class="ico" aria-hidden="true">💻</span> 跟随系统</button>' +
+                    '<button class="btn btn-outline" onclick="if(window.TDWallpaper)TDWallpaper.next()"><span class="ico" aria-hidden="true">🎲</span> 换一张壁纸</button></div>';
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(3)">← 上一步</button><button class="btn btn-primary" onclick="setStep(5)">下一步 →</button>';
             } else if (STEP === 5) {
                 panel.innerHTML = '<span class="onb-logo">✓</span>' +
                     '<h2 style="text-align:center">准备就绪</h2>' +
-                    '<p class="sub" style="text-align:center">点击「完成初始化」创建管理员账号并进入面板。<br>所有设置之后都可在对应页面修改。</p>';
+                    '<p>用户名：<strong>' + esc(data.username) + '</strong></p>' +
+                    '<p>密码：<strong>' + '•'.repeat(Math.min((pendingPw || '').length, 12)) + '</strong></p>' +
+                    '<p class="meta-text">点击「完成初始化」将创建管理员账号并进入面板</p>';
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(4)">← 上一步</button><button class="btn btn-primary" id="finishBtn" onclick="doFinish()">完成初始化</button>';
             }
         }
 
         function nextAdmin() {
             data.username = (document.getElementById('username').value || '').trim();
-            data.password = document.getElementById('password').value || '';
+            // 密码仅暂存于内存变量，不进入 data 对象
+            pendingPw = document.getElementById('password').value || '';
             var p2 = document.getElementById('password2').value || '';
-            if (!data.username || !data.password) return showErr('请输入用户名和密码');
-            if (data.password.length < 1 || data.password.length > 64) return showErr('密码长度需为 1-64 位');
-            if (data.password !== p2) return showErr('两次密码不一致');
+            if (!data.username || !pendingPw) return showErr('请输入用户名和密码');
+            if (pendingPw.length < 1 || pendingPw.length > 64) return showErr('密码长度需为 1-64 位');
+            if (pendingPw !== p2) return showErr('两次密码不一致');
             // 密码强度已通过 oninput 实时显示，此处仅做最终格式校验，弱密码不阻止继续
             setStep(3);
         }
@@ -143,25 +190,77 @@
         function nextConn(skip) {
             if (!skip) {
                 data.host = (document.getElementById('host').value || '').trim();
-                data.port = (document.getElementById('port').value || '').trim();
+                var portEl = document.getElementById('port');
+                var port = parseInt(portEl.value, 10);
+                if (isNaN(port) || port < 1 || port > 65535) {
+                    showErr('端口必须是 1-65535 的数字'); return;
+                }
+                data.port = port;
             }
             setStep(4);
         }
 
+        // 测试连接（setup 页无 showToast，使用内联结果文本）
+        function testSetupConn(btn) {
+            var host = (document.getElementById('host').value || '').trim();
+            var portEl = document.getElementById('port');
+            var port = parseInt(portEl.value, 10);
+            var res = document.getElementById('connTestResult');
+            if (!host || isNaN(port)) {
+                if (res) { res.textContent = '请先填写地址和端口'; res.style.color = 'var(--ink-subtle)'; }
+                return;
+            }
+            btn.disabled = true; var old = btn.textContent; btn.textContent = '测试中...';
+            if (res) { res.textContent = ''; }
+            fetch('/api/connections/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: host, port: port }) })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (res) {
+                        res.textContent = (d && d.success) ? '连接成功' : ('连接失败: ' + (d && d.error || '无法连接'));
+                        res.style.color = (d && d.success) ? 'var(--success)' : 'var(--danger)';
+                    }
+                })
+                .catch(function () { if (res) { res.textContent = '请求失败'; res.style.color = 'var(--danger)'; } })
+                .finally(function () { btn.disabled = false; btn.textContent = old; });
+        }
+
+        function _curTheme() {
+            try { return localStorage.getItem('td_theme_v2') || 'dark'; } catch (e) { return 'dark'; }
+        }
+        function updateThemeBtns(mode) {
+            var btns = document.querySelectorAll('.theme-pick');
+            btns.forEach(function (b) {
+                b.setAttribute('aria-pressed', b.getAttribute('data-theme-val') === mode ? 'true' : 'false');
+            });
+        }
+
+        // 主题：统一使用 base.html 的 setTheme（若可用）；否则本地兼容实现，写 td_theme_v2 并支持 system
         function setTheme(t) {
-            var light = (t === 'light');
-            document.body.classList.toggle('theme-light', light);
-            localStorage.setItem('td_theme', light ? 'light' : 'dark');
+            var mode = (t === 'light' || t === 'system') ? t : 'dark';
+            if (typeof window.setTheme === 'function' && window.setTheme !== setTheme) {
+                window.setTheme(mode);
+            } else {
+                try { localStorage.setItem('td_theme_v2', mode); } catch (e) {}
+                if (window._tdApplyTheme) window._tdApplyTheme(mode);
+            }
+            updateThemeBtns(mode);
         }
 
         function doFinish() {
-            if (!data.username || !data.password) { setStep(2); return showErr('请先设置管理员账号'); }
+            if (!data.username || !pendingPw) { setStep(2); return showErr('请先设置管理员账号'); }
             var btn = document.getElementById('finishBtn');
             if (btn) { btn.disabled = true; btn.textContent = '初始化中...'; }
-            fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: data.username, password: data.password }) })
+            // 读取后立即清空，避免密码在内存中无谓驻留
+            var pw = pendingPw;
+            pendingPw = null;
+            fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: data.username, password: pw }) })
                 .then(function (r) { return r.json(); })
                 .then(function (d) {
                     if (d.success) {
+                        var ov = document.createElement('div');
+                        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px';
+                        ov.textContent = '正在进入面板...';
+                        document.body.appendChild(ov);
                         var warn = (d.data || {}).password_warning;
                         if (warn && warn.tips && warn.tips.length) {
                             // 显示密码强度警告但继续进入面板

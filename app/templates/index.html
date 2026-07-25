@@ -9,28 +9,28 @@
 <div class="stat-grid">
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon" id="statusIcon">●</div>
+            <div class="stat-icon" id="statusIcon" aria-label="运行状态">●</div>
             <div class="stat-label">运行状态</div>
         </div>
         <div class="stat-value loading-text" id="statusText">检测中...</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">🧩</div>
+            <div class="stat-icon" aria-hidden="true">🧩</div>
             <div class="stat-label">插件数量</div>
         </div>
         <div class="stat-value loading-text" id="pluginCount">—</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">🛒</div>
+            <div class="stat-icon" aria-hidden="true">🛒</div>
             <div class="stat-label">市场插件数</div>
         </div>
         <div class="stat-value loading-text" id="marketCount">—</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">💾</div>
+            <div class="stat-icon" aria-hidden="true">💾</div>
             <div class="stat-label">备份数量</div>
         </div>
         <div class="stat-value loading-text" id="backupCount">—</div>
@@ -40,49 +40,49 @@
 <div class="stat-grid" id="dashStats">
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">⚙</div>
+            <div class="stat-icon" aria-hidden="true">⚙</div>
             <div class="stat-label">CPU 使用率</div>
         </div>
-        <div class="stat-value" id="dashCpu">0.0%</div>
+        <div class="stat-value" id="dashCpu" aria-live="polite">0.0%</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">📊</div>
+            <div class="stat-icon" aria-hidden="true">📊</div>
             <div class="stat-label">内存使用</div>
         </div>
         <div class="stat-value" id="dashMem">0 MB</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">💿</div>
+            <div class="stat-icon" aria-hidden="true">💿</div>
             <div class="stat-label">磁盘剩余</div>
         </div>
         <div class="stat-value" id="dashDisk">0.0 GB</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon" id="dashToolIcon">●</div>
+            <div class="stat-icon" id="dashToolIcon" aria-label="ToolDelta 运行状态">●</div>
             <div class="stat-label">ToolDelta</div>
         </div>
-        <div class="stat-value" id="dashToolStatus">检测中...</div>
+        <div class="stat-value" id="dashToolStatus" aria-live="polite">检测中...</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">🐕</div>
+            <div class="stat-icon" aria-hidden="true">🐕</div>
             <div class="stat-label">看门狗</div>
         </div>
         <div class="stat-value" id="dashWatchdog">关</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">🌐</div>
+            <div class="stat-icon" aria-hidden="true">🌐</div>
             <div class="stat-label">服务器连接</div>
         </div>
         <div class="stat-value" id="dashConnections">0</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
-            <div class="stat-icon">📊</div>
+            <div class="stat-icon" aria-hidden="true">📊</div>
             <div class="stat-label">定时任务</div>
         </div>
         <div class="stat-value" id="dashSchedJobs">0</div>
@@ -106,7 +106,7 @@
         <tbody id="sysInfoTable">
             <tr><td style="width:120px">Python 版本</td><td id="infoPython">-</td></tr>
             <tr><td>操作系统</td><td id="infoPlatform">-</td></tr>
-            <tr><td>ToolDelta 目录</td><td id="infoDir" style="word-break:break-all;font-family:monospace;font-size:12px">-</td></tr>
+            <tr><td>ToolDelta 目录</td><td id="infoDir" class="path-mono">-</td></tr>
             <tr><td>ToolDelta 状态</td><td id="infoExists">-</td></tr>
         </tbody>
     </table>
@@ -114,39 +114,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-async function loadDashboard() {
-    try {
-        const [status, sysInfo, plugins, market, backups] = await Promise.all([
-            fetch('/api/status').then(function(r){return r.json()}),
-            fetch('/api/system/info').then(function(r){return r.json()}),
-            fetch('/api/plugins').then(function(r){return r.json()}),
-            fetch('/api/market/plugins').then(function(r){return r.json()}),
-            fetch('/api/backups').then(function(r){return r.json()}),
-        ]);
-        var icon = document.getElementById('statusIcon');
-        var text = document.getElementById('statusText');
-        if (status.running) {
-            icon.textContent = 'ON';
-            text.textContent = '运行中';
-        } else {
-            icon.textContent = 'OFF';
-            text.textContent = '已停止';
-        }
-        document.getElementById('pluginCount').textContent = sysInfo.plugin_count || plugins.length;
-        document.getElementById('marketCount').textContent = market.length;
-        document.getElementById('backupCount').textContent = backups.length;
-        document.getElementById('infoPython').textContent = sysInfo.python_version;
-        document.getElementById('infoPlatform').textContent = sysInfo.platform;
-        document.getElementById('infoDir').textContent = sysInfo.tooldelta_dir;
-        document.getElementById('infoExists').textContent = sysInfo.tooldelta_exists ? '存在' : '不存在';
-    } catch(e) { console.error(e); }
-}
-loadDashboard();
-// 统一使用 TDPoll：页面隐藏时暂停，避免移动端后台耗电
-if (window.TDPoll) { window.TDPoll.register(loadDashboard, 5000); }
-else { setInterval(loadDashboard, 5000); }
-</script>
-
 <script src="/static/js/dashboard.js"></script>
 {% endblock %}

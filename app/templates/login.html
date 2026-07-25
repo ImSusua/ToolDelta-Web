@@ -13,15 +13,24 @@
         }
         .auth-card {
             position: relative; z-index: 1;
-            background: var(--glass-bg, rgba(20, 21, 22, 0.55));
-            backdrop-filter: blur(24px) saturate(160%);
-            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            /* fallback for backdrop-filter unsupported */
+            background: rgba(20, 21, 22, 0.92);
             border: 1px solid var(--glass-brd, rgba(255,255,255,0.08));
             border-radius: 20px; padding: 44px 40px; width: 100%; max-width: 390px;
             box-shadow: var(--shadow-lg, 0 24px 70px rgba(0,0,0,0.50));
             animation: authPop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.1);
         }
+        @supports (backdrop-filter: blur(24px)) {
+            .auth-card {
+                background: var(--glass-bg, rgba(20, 21, 22, 0.55));
+                backdrop-filter: blur(24px) saturate(160%);
+                -webkit-backdrop-filter: blur(24px) saturate(160%);
+            }
+        }
         @keyframes authPop { from { transform: translateY(16px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+            .auth-card, .auth-card .logo-big { animation: none !important; }
+        }
         .auth-card .logo-big {
             display: block; width: 60px; height: 60px; margin: 0 auto 18px;
             background: var(--grad-primary, linear-gradient(135deg, #5e6ad2, #828fff 55%, #a78bfa));
@@ -44,33 +53,40 @@
             .auth-card { padding: 32px 24px; max-width: 100%; }
         }
         .auth-card .btn { width: 100%; padding: 12px; font-size: 15px; margin-top: 6px; }
-        .auth-card .pw-toggle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 14px; opacity: 0.5; user-select: none; transition: opacity .15s; }
+        .auth-card .pw-toggle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 13px; opacity: 0.6; user-select: none; transition: opacity .15s; background: transparent; border: 0; padding: 4px 6px; color: inherit; }
         .auth-card .pw-toggle:hover { opacity: 1; }
+        .auth-card .pw-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 4px; opacity: 1; }
     </style>
 </head>
 <body class="auth-page">
+    <a href="#loginForm" class="skip-link">跳到登录表单</a>
     <script src="/static/js/wallpaper.js"></script>
     {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
     <div class="auth-card">
         <span class="logo-big">TD</span>
         <h1>登录</h1>
         <p class="sub">ToolDelta Web 管理面板</p>
-        <div class="form-group">
-            <label for="username">用户名</label>
-            <div class="input-wrap">
-                <span class="input-ico">👤</span>
-                <input type="text" id="username" placeholder="输入用户名" autocomplete="username">
+        <form id="loginForm" novalidate>
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <div class="input-wrap">
+                    <span class="input-ico" aria-hidden="true">👤</span>
+                    <input type="text" id="username" name="username" placeholder="输入用户名" autocomplete="username" enterkeyhint="next" autofocus>
+                </div>
             </div>
-        </div>
-        <div class="form-group">
-            <label for="password">密码</label>
-            <div class="input-wrap">
-                <span class="input-ico">🔒</span>
-                <input type="password" id="password" placeholder="输入密码" autocomplete="current-password" enterkeyhint="go" name="password">
-                <span class="pw-toggle" role="button" tabindex="0" aria-label="显示或隐藏密码" onclick="var i=document.getElementById('password');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'" onkeydown="if(event.key==='Enter'||event.key===' '||event.keyCode===13||event.keyCode===32){event.preventDefault();this.click();}">👁</span>
+            <div class="form-group">
+                <label for="password">密码</label>
+                <div class="input-wrap">
+                    <span class="input-ico" aria-hidden="true">🔒</span>
+                    <input type="password" id="password" name="password" placeholder="输入密码" autocomplete="current-password" enterkeyhint="go">
+                    <button type="button" class="pw-toggle" aria-pressed="false" aria-label="显示密码" onclick="toggleLoginPw(this)">显示</button>
+                </div>
             </div>
-        </div>
-        <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">登录</button>
+            <button type="submit" class="btn btn-primary" id="loginBtn">
+                <span class="btn-spinner" hidden></span><span>登录</span>
+            </button>
+            <div id="loginError" class="field-error" role="alert" aria-live="assertive" style="min-height:18px;margin-top:10px;text-align:center"></div>
+        </form>
     </div>
     <div class="toast-container" id="toastContainer"></div>
     <script>
@@ -83,23 +99,64 @@
             container.appendChild(t);
             setTimeout(function() { t.remove(); }, 3000);
         }
+        function toggleLoginPw(btn) {
+            var i = document.getElementById('password');
+            var isPw = i.type === 'password';
+            i.type = isPw ? 'text' : 'password';
+            btn.setAttribute('aria-pressed', isPw ? 'true' : 'false');
+            btn.textContent = isPw ? '隐藏' : '显示';
+            btn.setAttribute('aria-label', isPw ? '隐藏密码' : '显示密码');
+        }
+        function setLoginErr(msg) {
+            var errEl = document.getElementById('loginError');
+            if (errEl) errEl.textContent = msg || '';
+        }
         function doLogin() {
             var u = document.getElementById('username').value.trim();
             var p = document.getElementById('password').value;
-            if (!u || !p) { showToast('请输入用户名和密码', 'error'); return; }
+            if (!u || !p) {
+                setLoginErr('请输入用户名和密码');
+                if (!u) document.getElementById('username').focus();
+                else {
+                    var pw0 = document.getElementById('password');
+                    pw0.setAttribute('aria-invalid', 'true');
+                    pw0.focus();
+                }
+                return;
+            }
+            setLoginErr('');
+            document.getElementById('password').removeAttribute('aria-invalid');
             var btn = document.getElementById('loginBtn');
-            btn.disabled = true; btn.textContent = '登录中...';
+            var spinner = btn.querySelector('.btn-spinner');
+            btn.disabled = true;
+            if (spinner) spinner.hidden = false;
             fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p}) })
             .then(function(r){return r.json()})
             .then(function(d){
-                btn.disabled = false; btn.textContent = '登录';
-                if(d.success){ showToast('登录成功', 'success'); setTimeout(function(){ window.location.href='/'; }, 500); }
-                else { showToast(d.error||'登录失败', 'error'); }
+                if (d.success) {
+                    setLoginErr('');
+                    showToast('登录成功', 'success');
+                    setTimeout(function(){ window.location.href='/'; }, 100);
+                } else {
+                    btn.disabled = false;
+                    if (spinner) spinner.hidden = true;
+                    setLoginErr(d.error || '用户名或密码错误');
+                    var pwEl = document.getElementById('password');
+                    pwEl.setAttribute('aria-invalid', 'true');
+                    pwEl.value = '';
+                    pwEl.focus();
+                }
             })
-            .catch(function(){ btn.disabled = false; btn.textContent = '登录'; showToast('请求失败', 'error'); });
+            .catch(function(){
+                btn.disabled = false;
+                if (spinner) spinner.hidden = true;
+                setLoginErr('请求失败，请检查网络');
+            });
         }
-        document.getElementById('password').addEventListener('keydown', function(e){ if(e.key==='Enter') doLogin(); });
-        document.getElementById('username').addEventListener('keydown', function(e){ if(e.key==='Enter') document.getElementById('password').focus(); });
+        // 表单提交：Enter / 按钮点击统一走此处
+        document.getElementById('loginForm').addEventListener('submit', function(e){ e.preventDefault(); doLogin(); });
+        // 用户名 Enter 聚焦到密码（阻止表单自动提交）
+        document.getElementById('username').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('password').focus(); } });
     </script>
 </body>
 </html>

@@ -7,11 +7,11 @@
         <button class="btn btn-primary" onclick="loadLogs()">搜索</button>
         <button class="btn btn-outline" onclick="refreshLogs()">刷新</button>
         <button class="btn btn-outline" onclick="doExport()">导出</button>
-        <button class="btn btn-outline" onclick="clearDisplay()">清屏</button>
+        <button class="btn btn-outline" onclick="confirmClear()">清屏</button>
     </div>
 </div>
 
-<div class="search-bar">
+<div class="search-bar logs-search-bar">
     <select id="logLevel" aria-label="按级别筛选">
         <option value="">全部级别</option>
         <option value="INFO">INFO</option>
@@ -19,7 +19,7 @@
         <option value="ERROR">ERROR</option>
     </select>
     <select id="logSource" aria-label="按来源筛选"><option value="">全部来源</option></select>
-    <input type="text" id="logFilter" placeholder="关键字过滤..." oninput="filterLogs()" inputmode="search" aria-label="关键字过滤">
+    <input type="text" id="logFilter" placeholder="关键字过滤..." oninput="debounceFilter()" inputmode="search" aria-label="关键字过滤">
     <select id="logDate" onchange="loadLogs()" aria-label="选择日期">
         <option value="today">今天</option>
     </select>
@@ -30,7 +30,7 @@
         <span id="logStatus">日志</span>
         <span id="logCount">0 行</span>
     </div>
-    <div class="console-body log-body" id="logBody" style="height:600px"></div>
+    <div class="console-body log-body" id="logBody" style="height:600px" role="log" aria-live="off" aria-label="日志输出"></div>
 </div>
 <style>
 /* 移动端日志高度：覆盖内联 600px（内联 style 优先级最高，需 !important） */
@@ -40,9 +40,9 @@
 @media (max-width: 400px) {
     .log-body { height: 45vh !important; }
 }
-/* 日志搜索栏移动端堆叠 */
+/* 日志搜索栏移动端堆叠（同时支持 .search-bar 与 .logs-search-bar 选择器，兼容旧调用） */
 @media (max-width: 768px) {
-    .logs-search-bar { flex-direction: column; }
+    .logs-search-bar, .search-bar { flex-direction: column; }
 }
 </style>
 {% endblock %}

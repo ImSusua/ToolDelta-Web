@@ -5,6 +5,8 @@
 .fav-btn { cursor:pointer; border:none; background:transparent; color:var(--ink-tertiary); font-size:15px; line-height:1; padding:2px 6px; border-radius:6px; transition:.15s; }
 .fav-btn:hover { color:#f5b50a; background:rgba(245,181,10,0.12); }
 .fav-btn.fav-on { color:#f5b50a; }
+/* 搜索高亮：复用 palette-item mark 思路，给 cmd-row 内匹配关键词加底色 */
+.cmd-row mark { background: rgba(94,106,210,0.25); border-radius: 2px; padding: 0 1px; }
 </style>
 <div class="page-header">
     <h1>命令参考</h1>
@@ -12,8 +14,9 @@
 </div>
 
 <div class="search-bar">
-    <input type="text" id="cmdSearch" placeholder="搜索命令或用途..." inputmode="search" enterkeyhint="search" oninput="renderCommands()" aria-label="搜索命令">
-    <input type="text" id="cmdPluginFilter" placeholder="按插件名筛选..." inputmode="search" enterkeyhint="search" oninput="renderCommands()" aria-label="按插件名筛选">
+    <input type="text" id="cmdSearch" placeholder="搜索命令或用途..." inputmode="search" enterkeyhint="search" oninput="debounceRender()" aria-label="搜索命令">
+    <input type="text" id="cmdPluginFilter" placeholder="按插件名筛选..." inputmode="search" enterkeyhint="search" oninput="debounceRender()" aria-label="按插件名筛选">
+    <label class="check-label"><input type="checkbox" id="favOnly" onchange="renderCommands()"> 仅看收藏</label>
 </div>
 
 <div id="cmdList"></div>
@@ -23,6 +26,9 @@
 <script>
 var allCommandData = [];
 var favSet = new Set();
+// 记住用户手动展开/折叠的插件卡片，避免每次重渲染都被重置为“仅展开第一个”
+var _expandedPlugins = new Set();
+var _cmdSearchTimer = null;
 
 // 转义服务端数据，防止注入到 innerHTML
 function _cEsc(s) {
@@ -32,37 +38,95 @@ function _cEsc(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function loadCommands() {
-    fetch('/api/commands/stats')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            allCommandData = d.plugins || [];
-            var st = document.getElementById('cmdStats');
-            if (st) st.textContent = '共 ' + d.total_commands + ' 个命令，来自 ' + d.total_plugins + ' 个插件';
-            renderCommands();
-            loadFavorites();
-        })
-        .catch(function() { showToast('加载命令失败', 'error'); });
+// 搜索防抖：避免每输入一个字符就全量重渲染
+function debounceRender() {
+    if (_cmdSearchTimer) clearTimeout(_cmdSearchTimer);
+    _cmdSearchTimer = setTimeout(renderCommands, 150);
 }
 
+// 搜索高亮：先转义再包裹 <mark>，正则特殊字符已转义防止注入
+function highlight(text, q) {
+    if (!text) return '';
+    var esc = _cEsc(text);
+    if (!q) return esc;
+    var safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try {
+        var re = new RegExp('(' + safeQ + ')', 'ig');
+        return esc.replace(re, '<mark>$1</mark>');
+    } catch (_) { return esc; }
+}
+
+// 并行加载命令统计与收藏列表，避免串行等待
+function loadCommands() {
+    Promise.all([
+        fetch('/api/commands/stats').then(function(r) { return r.json(); }),
+        fetch('/api/favorites').then(function(r) { return r.json(); })
+    ]).then(function(results) {
+        var d = results[0] || {};
+        allCommandData = d.plugins || [];
+        var st = document.getElementById('cmdStats');
+        if (st) st.textContent = '共 ' + d.total_commands + ' 个命令，来自 ' + d.total_plugins + ' 个插件';
+        favSet = new Set((results[1] && results[1].commands) || []);
+        renderCommands();
+    }).catch(function() { showToast('加载命令失败', 'error'); });
+}
+
+// 单独刷新收藏（保留入口，供外部调用）
 function loadFavorites() {
-    fetch('/api/favorites')
+    return fetch('/api/favorites')
         .then(function(r) { return r.json(); })
         .then(function(d) { favSet = new Set(d.commands || []); renderCommands(); })
         .catch(function() { favSet = new Set(); });
 }
 
-function toggleFav(cmd) {
-    var method = favSet.has(cmd) ? 'DELETE' : 'POST';
-    fetch('/api/favorites', { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: cmd }) })
+// 收藏切换：局部更新按钮状态，避免全量重渲染丢失展开/滚动位置
+function toggleFav(trigger) {
+    var key = trigger.getAttribute('data-trigger');
+    var wasFav = favSet.has(key);
+    var method = wasFav ? 'DELETE' : 'POST';
+    fetch('/api/favorites', { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: key }) })
         .then(function(r) { return r.json(); })
-        .then(function(d) { if (d.success) { favSet = new Set(d.commands || []); renderCommands(); } })
+        .then(function(d) {
+            if (d && d.success) {
+                // 以服务端返回的权威列表重建 favSet
+                favSet = new Set(d.commands || []);
+                var isFav = favSet.has(key);
+                trigger.classList.toggle('fav-on', isFav);
+                trigger.setAttribute('aria-pressed', isFav ? 'true' : 'false');
+                showToast(isFav ? '已收藏' : '已取消收藏', 'success');
+                // “仅看收藏”模式下需要重新过滤列表，否则取消收藏的项仍残留
+                var favOnlyEl = document.getElementById('favOnly');
+                if (favOnlyEl && favOnlyEl.checked) renderCommands();
+            } else {
+                showToast('操作失败', 'error');
+            }
+        })
         .catch(function() { showToast('收藏操作失败', 'error'); });
 }
 
+// 展开/折叠插件卡片：用 Set 持久化状态，而非每次操作 style.display 后被重渲染覆盖
+function togglePluginCard(header) {
+    var body = header.nextElementSibling;
+    var pluginName = header.getAttribute('data-plugin');
+    if (!body) return;
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        if (pluginName) _expandedPlugins.add(pluginName);
+        header.setAttribute('aria-expanded', 'true');
+    } else {
+        body.style.display = 'none';
+        if (pluginName) _expandedPlugins.delete(pluginName);
+        header.setAttribute('aria-expanded', 'false');
+    }
+}
+
 function renderCommands() {
-    var q = document.getElementById('cmdSearch').value.toLowerCase();
-    var pluginFilter = document.getElementById('cmdPluginFilter').value.toLowerCase();
+    var qEl = document.getElementById('cmdSearch');
+    var pfEl = document.getElementById('cmdPluginFilter');
+    var favOnlyEl = document.getElementById('favOnly');
+    var q = qEl ? qEl.value.toLowerCase() : '';
+    var pluginFilter = pfEl ? pfEl.value.toLowerCase() : '';
+    var favOnly = favOnlyEl && favOnlyEl.checked;
     var data = allCommandData;
 
     if (pluginFilter) {
@@ -77,34 +141,48 @@ function renderCommands() {
             return { plugin: p.plugin, commands: cmds, count: cmds.length, is_enabled: p.is_enabled };
         }).filter(function(p) { return p.count > 0; });
     }
+    if (favOnly) {
+        data = data.map(function(p) {
+            var cmds = p.commands.filter(function(c) { return favSet.has(c.triggers[0]); });
+            return { plugin: p.plugin, commands: cmds, count: cmds.length, is_enabled: p.is_enabled };
+        }).filter(function(p) { return p.count > 0; });
+    }
 
     var container = document.getElementById('cmdList');
     if (!container) return;
     if (data.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">⌨️</div>未找到命令<p class="empty-hint">尝试更换关键词或浏览其他分组</p></div>';
+        if (window.renderState) {
+            renderState(container, 'empty', {
+                icon: '⌨️', title: '未找到命令',
+                hint: favOnly ? '当前没有已收藏的命令' : '尝试更换关键词或浏览其他分组'
+            });
+        } else {
+            container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">⌨️</div>未找到命令<p class="empty-hint">尝试更换关键词或浏览其他分组</p></div>';
+        }
         return;
     }
 
     container.innerHTML = data.map(function(p, idx) {
-        var expanded = idx === 0;
+        // 首次进入（无筛选且用户未手动操作过）默认展开第一个；否则以 Set 为准
+        var expanded = _expandedPlugins.has(p.plugin) || (idx === 0 && !q && !pluginFilter && !favOnly && _expandedPlugins.size === 0);
         return '<div class="cmd-card">' +
             '<div class="cmd-header" tabindex="0" role="button" aria-expanded="' + (expanded ? 'true' : 'false') + '"' +
-            ' onclick="var n=this.nextElementSibling;var s=n.style.display!==\'none\';n.style.display=s?\'none\':\'block\';this.setAttribute(\'aria-expanded\',s?\'false\':\'true\')"' +
+            ' data-plugin="' + _cEsc(p.plugin) + '"' +
+            ' onclick="togglePluginCard(this)"' +
             ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'||event.keyCode===13||event.keyCode===32){event.preventDefault();this.click()}">' +
             '<span><strong>' + _cEsc(p.plugin) + '</strong> <span class="badge badge-count">' + _cEsc(p.count) + ' 个命令</span></span>' +
-            '<span style="font-size:12px;color:var(--ink-subtle)">' + (p.is_enabled ? '已启用' : '已禁用') + '</span>' +
+            '<span class="tag ' + (p.is_enabled ? 'tag-enabled' : 'tag-disabled') + '">' + (p.is_enabled ? '已启用' : '已禁用') + '</span>' +
             '</div>' +
             '<div class="cmd-body" style="display:' + (expanded ? 'block' : 'none') + '">' +
             p.commands.map(function(c) {
                 var key = c.triggers[0];
-                var favCls = favSet.has(key) ? ' fav-on' : '';
-                // JSON.stringify 已转义双引号，再用 _cEsc 处理单引号闭合风险
-                var keyAttr = _cEsc(JSON.stringify(key));
+                var isFav = favSet.has(key);
+                var favCls = isFav ? ' fav-on' : '';
                 return '<div class="cmd-row">' +
-                    '<button class="fav-btn' + favCls + '" data-tip="收藏此命令" onclick=\'toggleFav(' + keyAttr + ')\'>★</button>' +
-                    '<span class="triggers">' + c.triggers.map(_cEsc).join('、') + '</span>' +
+                    '<button class="fav-btn' + favCls + '" aria-label="收藏 ' + _cEsc(key) + '" aria-pressed="' + (isFav ? 'true' : 'false') + '" data-trigger="' + _cEsc(key) + '" onclick="toggleFav(this)">★</button>' +
+                    '<span class="triggers">' + c.triggers.map(function(t) { return highlight(t, q); }).join('、') + '</span>' +
                     '<span class="hint">' + _cEsc(c.hint || '') + '</span>' +
-                    '<span class="usage">' + _cEsc(c.usage || '') + '</span>' +
+                    '<span class="usage">' + highlight(c.usage || '', q) + '</span>' +
                     '</div>';
             }).join('') +
             '</div></div>';

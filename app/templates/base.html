@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-    <meta name="theme-color" content="#0f1011">
+    <meta name="theme-color" content="#5e6ad2" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1011" media="(prefers-color-scheme: dark)">
     <meta name="color-scheme" content="light dark">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; media-src 'self' data: blob:;">
     <title>ToolDelta Web 管理面板</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script>
@@ -34,9 +36,11 @@
           }
           document.documentElement.setAttribute('data-theme', actual);
           document.documentElement.style.setProperty('color-scheme', actual);
-          // theme-color 跟随：移动端浏览器顶栏配色
-          var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', actual === 'light' ? '#eef1f6' : '#0f1011');
+          // theme-color 跟随：移动端浏览器顶栏配色（更新所有 theme-color meta）
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          metas.forEach(function(m) {
+            m.setAttribute('content', actual === 'light' ? '#eef1f6' : '#0f1011');
+          });
         }
         applyTheme(stored);
         // 系统主题变化时若用户选 system 则跟随
@@ -109,6 +113,10 @@
         vv.addEventListener('scroll', onResize);
       })();
     </script>
+    </head>
+    <body>
+    <noscript><div style="padding:20px;text-align:center;background:#fff3cd;color:#856404">本面板需要 JavaScript 支持，请启用后刷新。</div></noscript>
+    <a href="#mainContent" class="skip-link">跳到主要内容</a>
     {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
     <script src="/static/js/wallpaper.js"></script>
     <button class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false">☰</button>
@@ -157,12 +165,12 @@
         });
       })();
     </script>
-    <a href="#mainContent" class="skip-link">跳到主要内容</a>
     <aside class="sidebar" id="sidebar">
         <div class="brand">
             <span class="logo">TD</span>
             <span class="brand-name">ToolDelta</span>
-            <span class="status-dot" id="sidebarStatus" role="status" aria-label="连接状态未知"></span>
+            <span class="status-dot" id="sidebarStatus" aria-hidden="true"></span>
+            <span class="sr-only" id="sidebarStatusText">连接状态未知</span>
         </div>
         <nav aria-label="主导航">
             <a href="/" class="{% if active_page == 'index' %}active{% endif %}" {% if active_page == 'index' %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📊</span>仪表盘</a>
@@ -216,8 +224,8 @@
     <div class="toast-container" id="toastContainer" role="region" aria-live="polite" aria-label="通知"></div>
 
     <!-- 依赖安装遮罩层：高斯模糊背景 + 安装方式选择 + 动画进度条 + 实时日志 -->
-    <div class="dep-overlay" id="depOverlay" role="dialog" aria-modal="true" aria-labelledby="depTitle">
-        <div class="dep-card">
+    <div class="dep-overlay" id="depOverlay" role="presentation">
+        <div class="dep-card" role="dialog" aria-modal="true" aria-labelledby="depTitle">
             <!-- 步骤一：选择安装方式 -->
             <div class="dep-choose" id="depChoose">
                 <div class="dep-head">
@@ -229,7 +237,7 @@
                 </div>
                 <div class="dep-options">
                     <button class="dep-opt" onclick="triggerDepInstall('local')">
-                        <div class="dep-opt-ico">📦</div>
+                        <div class="dep-opt-ico" aria-hidden="true">📦</div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">本地安装<span class="dep-opt-sub">（离线）</span></div>
                             <div class="dep-opt-desc">使用随附离线包，无需联网，适合共享服务器 / 无外网环境。</div>
@@ -237,7 +245,7 @@
                         <span class="dep-opt-tag">可能版本较旧</span>
                     </button>
                     <button class="dep-opt" onclick="triggerDepInstall('online')">
-                        <div class="dep-opt-ico">🌐</div>
+                        <div class="dep-opt-ico" aria-hidden="true">🌐</div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">网络安装<span class="dep-opt-sub">（在线）</span></div>
                             <div class="dep-opt-desc">从 PyPI / 镜像源下载最新版本，需要联网。</div>
@@ -270,8 +278,8 @@
         </div>
     </div>
 
-    <div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
-        <div class="modal modal-sm">
+    <div class="modal-overlay" id="confirmModal" role="presentation">
+        <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
             <h2 id="confirmTitle">确认</h2>
             <p id="confirmMessage" class="modal-message"></p>
             <div class="modal-actions">
@@ -282,8 +290,8 @@
     </div>
 
     <!-- 自定义输入弹窗（替代浏览器 prompt） -->
-    <div class="modal-overlay" id="promptModal" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
-        <div class="modal modal-sm">
+    <div class="modal-overlay" id="promptModal" role="presentation">
+        <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
             <h2 id="promptTitle">请输入</h2>
             <div class="form-group">
                 <input type="text" id="promptInput" class="form-control" onkeydown="if(event.key==='Enter')closePrompt(true)">
@@ -296,11 +304,12 @@
     </div>
 
     <!-- 通知历史面板（参考 Linear / GitHub 通知下拉） -->
-    <div class="modal-overlay" id="notifyModal" role="dialog" aria-modal="true" aria-labelledby="notifyTitle">
-        <div class="modal modal-sm notify-modal">
+    <div class="modal-overlay" id="notifyModal" role="presentation">
+        <div class="modal modal-sm notify-modal" role="dialog" aria-modal="true" aria-labelledby="notifyTitle">
             <h2 id="notifyTitle">通知历史</h2>
             <div id="notifyList" class="notify-list" role="log" aria-live="polite" aria-label="通知列表"></div>
             <div class="modal-actions">
+                <button class="btn btn-outline btn-sm" id="notifyReadAllBtn" onclick="_markAllRead()">全部已读</button>
                 <button class="btn btn-outline btn-sm" id="notifyClearBtn" onclick="_clearNotifyHistory()">清空</button>
                 <button class="btn btn-outline" onclick="closeModal('notifyModal')">关闭</button>
             </div>
@@ -314,8 +323,8 @@
     </script>
 
     <!-- 命令面板 Cmd+K（参考 Linear / Raycast / Vercel cmdk） -->
-    <div class="modal-overlay" id="cmdPalette" role="dialog" aria-modal="true" aria-label="命令面板">
-        <div class="palette-box">
+    <div class="modal-overlay" id="cmdPalette" role="presentation">
+        <div class="palette-box" role="dialog" aria-modal="true" aria-label="命令面板">
             <div class="palette-input-wrap">
                 <input type="text" id="paletteInput" class="palette-input" placeholder="输入命令或搜索…" autocomplete="off" spellcheck="false" aria-label="搜索命令">
             </div>
@@ -332,15 +341,15 @@
     <button class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板">⌘</button>
 
     <!-- 键盘快捷键帮助（参考 GitHub `?` 快捷键速查） -->
-    <div class="modal-overlay" id="shortcutsModal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
-        <div class="modal modal-sm shortcuts-modal">
+    <div class="modal-overlay" id="shortcutsModal" role="presentation">
+        <div class="modal modal-sm shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
             <h2 id="shortcutsTitle">键盘快捷键</h2>
             <div class="shortcuts-list">
                 <div class="shortcut-row"><span class="shortcut-desc">打开命令面板</span><span class="shortcut-keys"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">聚焦页面搜索框</span><span class="shortcut-keys"><kbd>/</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">查看快捷键速查</span><span class="shortcut-keys"><kbd>?</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">关闭弹窗 / 抽屉</span><span class="shortcut-keys"><kbd>esc</kbd></span></div>
-                <div class="shortcut-row"><span class="shortcut-desc">切换主题</span><span class="shortcut-keys"><kbd>⇧</kbd> + <kbd>T</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">切换主题</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>t</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">命令面板内移动</span><span class="shortcut-keys"><kbd>↑</kbd> <kbd>↓</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">执行选中命令</span><span class="shortcut-keys"><kbd>↵</kbd></span></div>
             </div>
