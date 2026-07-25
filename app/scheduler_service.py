@@ -101,6 +101,7 @@ class SchedulerService:
             "last_run": job.get("last_run"),
             "next_run": job.get("next_run"),
             "run_count": int(job.get("run_count", 0) or 0),
+            "last_error": job.get("last_error"),
         }
 
     # ─── 校验与构造 ───────────────────────────────────────────
@@ -315,7 +316,7 @@ class SchedulerService:
                 if not ok:
                     job["last_error"] = now.strftime(_FMT) + " 进程未运行或命令发送失败"
                     try:
-                        log_service.warning(
+                        log_service.warn(
                             f"定时任务未执行(进程未运行或发送失败): {job['name']}", "SCHEDULER"
                         )
                     except Exception:
@@ -330,6 +331,8 @@ class SchedulerService:
                 except Exception:
                     pass
             except Exception as e:
+                job["last_error"] = now.strftime(_FMT) + " " + str(e)
+                job["last_run"] = now.strftime(_FMT)
                 try:
                     log_service.error(
                         f"定时任务失败: {job['name']}: {e}", "SCHEDULER"

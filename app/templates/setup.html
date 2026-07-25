@@ -44,7 +44,7 @@
 <body class="auth-page">
     <script src="/static/js/wallpaper.js"></script>
 
-    <div class="onb-overlay">
+    <div class="onb-overlay" role="dialog" aria-modal="true" aria-labelledby="onbTitle">
         <div class="onb-card">
             <div class="onb-steps">
                 <div class="onb-step active" data-step="1"><span class="dot">1</span><span class="lbl">欢迎</span></div>
@@ -54,7 +54,7 @@
                 <div class="onb-step" data-step="5"><span class="dot">5</span><span class="lbl">完成</span></div>
             </div>
             <div class="onb-progress" role="progressbar" aria-valuenow="1" aria-valuemin="1" aria-valuemax="5" aria-label="初始化进度"><div class="bar" id="onbBar"></div></div>
-            <div class="onb-panel" id="onbPanel"></div>
+            <div class="onb-panel" id="onbPanel" aria-live="polite"></div>
             <div class="onb-actions" id="onbActions"></div>
         </div>
     </div>
@@ -132,11 +132,11 @@
             var actions = document.getElementById('onbActions');
             if (STEP === 1) {
                 panel.innerHTML = '<span class="onb-logo">TD</span>' +
-                    '<h2 style="text-align:center">欢迎使用 ToolDelta Web</h2>' +
+                    '<h2 id="onbTitle" style="text-align:center">欢迎使用 ToolDelta Web</h2>' +
                     '<p class="sub" style="text-align:center">这是首次初始化，我们将用几步引导你完成基础配置。<br>整个过程只需一分钟，所有设置之后都可在面板中修改。</p>';
                 actions.innerHTML = '<span></span><button class="btn btn-primary" onclick="setStep(2)">开始配置 →</button>';
             } else if (STEP === 2) {
-                panel.innerHTML = '<h2>管理员账号</h2>' +
+                panel.innerHTML = '<h2 id="onbTitle">管理员账号</h2>' +
                     '<p class="sub">设置用于登录管理面板的账号与密码（首次初始化必需，弱密码仅提示不阻止创建）。</p>' +
                     '<div class="form-group"><label for="username">用户名</label><input type="text" id="username" name="username" autocomplete="username" enterkeyhint="next" placeholder="设置用户名（支持中文，1-32位）" aria-describedby="onbErr" value="' + esc(data.username) + '"></div>' +
                     '<div class="form-group"><label for="password">密码</label><input type="password" id="password" name="new-password" autocomplete="new-password" enterkeyhint="next" placeholder="设置密码（1-64 位，建议8位以上）" aria-describedby="onbErr" oninput="renderPwStrength(this.value)"></div>' +
@@ -149,7 +149,7 @@
                     if (pwInput && pendingPw) { pwInput.value = pendingPw; renderPwStrength(pendingPw); }
                 }, 0);
             } else if (STEP === 3) {
-                panel.innerHTML = '<h2>服务器连接（可选）</h2>' +
+                panel.innerHTML = '<h2 id="onbTitle">服务器连接（可选）</h2>' +
                     '<p class="sub">填写你的 Minecraft 服务器地址，初始化后即可一键连接；也可稍后在「服务器连接」中配置。</p>' +
                     '<div class="form-group"><label for="host">服务器地址</label><input type="text" id="host" name="host" enterkeyhint="next" placeholder="例如 127.0.0.1 或 play.example.com" aria-describedby="onbErr" value="' + esc(data.host) + '"></div>' +
                     '<div class="form-group"><label for="port">端口</label><input type="text" id="port" name="port" inputmode="numeric" pattern="[0-9]*" enterkeyhint="next" placeholder="例如 19132" aria-describedby="onbErr" value="' + esc(data.port) + '"></div>' +
@@ -157,7 +157,7 @@
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(2)">← 上一步</button><button class="btn btn-outline" onclick="nextConn(true)">跳过</button><button class="btn btn-primary" onclick="nextConn(false)">下一步 →</button>';
             } else if (STEP === 4) {
                 var cur = _curTheme();
-                panel.innerHTML = '<h2>外观偏好</h2>' +
+                panel.innerHTML = '<h2 id="onbTitle">外观偏好</h2>' +
                     '<p class="sub">选择深色 / 浅色 / 跟随系统主题，并预览随机背景壁纸。</p>' +
                     '<div style="display:flex;gap:10px;margin-bottom:6px;flex-wrap:wrap">' +
                     '<button class="btn btn-outline theme-pick" data-theme-val="dark" onclick="setTheme(\'dark\')" aria-pressed="' + (cur === 'dark' ? 'true' : 'false') + '"><span class="ico" aria-hidden="true">🌑</span> 深色</button>' +
@@ -167,7 +167,7 @@
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(3)">← 上一步</button><button class="btn btn-primary" onclick="setStep(5)">下一步 →</button>';
             } else if (STEP === 5) {
                 panel.innerHTML = '<span class="onb-logo">✓</span>' +
-                    '<h2 style="text-align:center">准备就绪</h2>' +
+                    '<h2 id="onbTitle" style="text-align:center">准备就绪</h2>' +
                     '<p>用户名：<strong>' + esc(data.username) + '</strong></p>' +
                     '<p>密码：<strong>' + '•'.repeat(Math.min((pendingPw || '').length, 12)) + '</strong></p>' +
                     '<p class="meta-text">点击「完成初始化」将创建管理员账号并进入面板</p>';

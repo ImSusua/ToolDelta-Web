@@ -6,7 +6,17 @@
     <div class="card" style="margin-bottom:20px">
         <h2 class="card-title">面板壁纸</h2>
         <p class="help-text">设置后每次打开面板都会看到这张壁纸，不会自动更换。点击「随机壁纸」随机切换。</p>
-        <div id="wallpaperPreview" class="wallpaper-preview"{% if wallpaper_url %} style="background-image:url('{{ wallpaper_url }}')"{% endif %}></div>
+        <div id="wallpaperPreview" class="wallpaper-preview"></div>
+        <script>
+          // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
+          (function(){
+            var wUrl = {{ wallpaper_url|tojson }};
+            if (wUrl) {
+              var el = document.getElementById('wallpaperPreview');
+              if (el) el.style.backgroundImage = "url('" + wUrl + "')";
+            }
+          })();
+        </script>
         <div class="form-row" style="flex-wrap:wrap">
             <button class="btn btn-primary" onclick="fetchWallpaper()">随机壁纸</button>
             <button class="btn btn-outline" onclick="clearWallpaper()">清除壁纸</button>
@@ -78,17 +88,17 @@
         <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">编辑 ToolDelta 基本配置 (ToolDelta基本配置.json)</p>
         <div id="launcherConfigForm">
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">全局GitHub镜像 <span style="color:var(--ink-tertiary);font-weight:400">(只读)</span></label>
+                <label for="cfg_github_mirror" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">全局GitHub镜像 <span style="color:var(--ink-tertiary);font-weight:400">(只读)</span></label>
                 <input type="text" id="cfg_github_mirror" readonly style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-3);color:var(--ink-subtle);font-size:13px;outline:none;box-sizing:border-box">
             </div>
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">是否记录日志</label>
+                <label for="cfg_logging" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">是否记录日志</label>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
                     <input type="checkbox" id="cfg_logging" style="accent-color:var(--primary)"> 启用日志记录
                 </label>
             </div>
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">插件市场源</label>
+                <label for="cfg_market_source" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">插件市场源</label>
                 <select id="cfg_market_source" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
                     <option value="">— 请选择 —</option>
                 </select>
@@ -97,15 +107,15 @@
                 <span style="font-size:13px;font-weight:600;color:var(--ink-muted)">FateArk 接入点</span>
             </div>
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">服务器号</label>
+                <label for="cfg_fate_server" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">服务器号</label>
                 <input type="number" id="cfg_fate_server" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
             </div>
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">密码</label>
+                <label for="cfg_fate_password" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">密码</label>
                 <input type="password" id="cfg_fate_password" autocomplete="current-password" enterkeyhint="done" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
             </div>
             <div style="margin-bottom:10px">
-                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">验证服务器地址</label>
+                <label for="cfg_fate_server_addr" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">验证服务器地址</label>
                 <input type="text" id="cfg_fate_server_addr" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
             </div>
             <div style="margin-top:12px;display:flex;gap:8px">
@@ -119,6 +129,7 @@
         <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">Fbtoken</h2>
         <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">Web 终端登录所需的 fbtoken，可在终端外修改</p>
         <div style="display:flex;gap:8px">
+            <label for="fbtokenInput" class="sr-only">fbtoken</label>
             <input type="text" id="fbtokenInput" placeholder="输入 fbtoken..." style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
             <button class="btn btn-outline btn-sm" onclick="tdCopy(document.getElementById('fbtokenInput').value, '已复制 fbtoken')" data-tip="复制当前 token" aria-label="复制 fbtoken">复制</button>
             <button class="btn btn-primary btn-sm" onclick="saveFbtoken()">保存</button>
@@ -262,6 +273,14 @@ fetch('/api/system/info').then(function(r){return r.json()}).then(function(d){
 loadLauncherConfig();
 loadFbtoken();
 
+// 校验 URL 协议（仅允许 http/https）后再拼接，防止 CSS 注入
+function safeWallpaperUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (!/^https?:\/\//i.test(url)) return '';
+    try { url = encodeURI(url); } catch(e) { return ''; }
+    return "url('" + url + "')";
+}
+
 function fetchWallpaper() {
     var errEl = document.getElementById('wallpaperError');
     errEl.style.display = 'none';
@@ -269,7 +288,8 @@ function fetchWallpaper() {
     .then(function(r){return r.json()})
     .then(function(d){
         if(d.success && d.data && d.data.url) {
-            document.getElementById('wallpaperPreview').style.backgroundImage = "url('"+d.data.url+"')";
+            var bg = safeWallpaperUrl(d.data.url);
+            if (bg) document.getElementById('wallpaperPreview').style.backgroundImage = bg;
             if(window.TDWallpaper) TDWallpaper.lock(d.data.url);
             showToast('壁纸已更换', 'success');
         } else {
@@ -288,7 +308,8 @@ function setManualWallpaper() {
     .then(function(r){return r.json()})
     .then(function(d){
         if(d.success && d.data && d.data.url) {
-            document.getElementById('wallpaperPreview').style.backgroundImage = "url('"+d.data.url+"')";
+            var bg = safeWallpaperUrl(d.data.url);
+            if (bg) document.getElementById('wallpaperPreview').style.backgroundImage = bg;
             if(window.TDWallpaper) TDWallpaper.lock(d.data.url);
             document.getElementById('manualWallpaperUrl').value = '';
             showToast('壁纸已设置', 'success');
@@ -353,9 +374,8 @@ function changePassword() {
 }
 
 function confirmReset() {
-    showConfirm('请输入当前密码以确认重置面板：', function(ok) {
-        if (!ok) return;
-        var pw = prompt('输入当前密码确认重置：');
+    // 合并原两步（showConfirm + 原生 prompt）为单步 showPrompt 模态，与 files/backup/commands 一致
+    showPrompt('请输入当前密码以确认重置面板', '输入当前密码', '', function(pw) {
         if (!pw) return;
         fetch('/api/reset-panel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw}) })
         .then(function(r){return r.json()})
@@ -364,7 +384,7 @@ function confirmReset() {
             else { showToast(d.error||'重置失败', 'error'); }
         })
         .catch(function(){ showToast('请求失败', 'error'); });
-    }, true);
+    });
 }
 
 function createUser() {

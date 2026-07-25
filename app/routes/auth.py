@@ -56,7 +56,9 @@ def setup():
         return fail(msg)
     # 弱密码仅提示，不阻止创建
     level, tips = auth_service.check_password_strength(password)
-    auth_service.setup_user(username, password)
+    ok_, err = auth_service.setup_user(username, password)
+    if not ok_:
+        return fail(err)
     auth_service.clear_login_fails(ip)
     # 会话固定防护：登录前清空旧 session，强制服务端生成新 session id
     session.clear()
@@ -231,10 +233,11 @@ def reset_user_password():
     valid, msg = auth_service.validate_password(new_pw)
     if not valid:
         return fail(msg)
-    if auth_service.admin_reset_password(username, new_pw):
+    ok_, err = auth_service.admin_reset_password(username, new_pw)
+    if ok_:
         audit("重置用户密码", f"用户名={username}")
         return ok()
-    return fail("用户不存在")
+    return fail(err)
 
 # ─── 壁纸设置 ───
 

@@ -112,11 +112,22 @@
     </script>
     </head>
     <body>
-    <noscript><div style="padding:20px;text-align:center;background:#fff3cd;color:#856404">本面板需要 JavaScript 支持，请启用后刷新。</div></noscript>
+    <noscript><div style="padding:20px;text-align:center;background:#fff3cd;color:#664d03">本面板需要 JavaScript 支持，请启用后刷新。</div></noscript>
     <a href="#mainContent" class="skip-link">跳到主要内容</a>
-    {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
+    {% if wallpaper_url %}<div class="wallpaper-bg"></div>
+    <script>
+      // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
+      (function(){
+        var wUrl = {{ wallpaper_url|tojson }};
+        if (wUrl) {
+          var el = document.querySelector('.wallpaper-bg');
+          if (el) el.style.backgroundImage = "url('" + wUrl + "')";
+        }
+      })();
+    </script>
+    {% endif %}
     <script src="/static/js/wallpaper.js"></script>
-    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false"><span class="nav-ico" data-icon="list" aria-hidden="true"></span></button>
+    <button type="button" class="sidebar-toggle-btn" onclick="toggleSidebar()" data-tip="菜单" data-tip-pos="bottom" aria-label="切换菜单" aria-expanded="false"><span class="nav-ico" data-icon="list" aria-hidden="true"></span></button>
     <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()" role="button" tabindex="0" aria-label="关闭菜单"></div>
     <script>
       /* ── Android 侧边栏边缘滑动手势 ──
@@ -185,12 +196,15 @@
         </nav>
         <div class="sidebar-footer">
             <div class="footer-actions-row">
-              <button class="theme-toggle" onclick="toggleTheme()" data-tip="切换主题（深色 / 浅色 / 系统）" aria-label="切换主题（深色 / 浅色 / 跟随系统）">
+              <button type="button" class="theme-toggle" onclick="toggleTheme()" data-tip="切换主题（深色 / 浅色 / 系统）" aria-label="切换主题（深色 / 浅色 / 跟随系统）">
                 <span class="theme-icon" aria-hidden="true"></span><span class="theme-label">主题</span>
               </button>
-              <button class="notify-toggle" onclick="openNotifyPanel()" data-tip="通知历史" aria-label="通知历史">
+              <button type="button" class="notify-toggle" onclick="openNotifyPanel()" data-tip="通知历史" aria-label="通知历史">
                 <span class="notify-ico" data-icon="bell" aria-hidden="true"></span>
                 <span class="notify-badge" id="notifyBadge" style="display:none" aria-hidden="true">0</span>
+              </button>
+              <button class="kbd-help-toggle" type="button" onclick="openShortcutsHelp()" data-tip="键盘快捷键 ?" aria-label="查看键盘快捷键">
+                <span data-icon="keyboard" aria-hidden="true"></span>
               </button>
             </div>
             <script>
@@ -210,7 +224,7 @@
         </div>
     </aside>
 
-    <main class="main-content" id="mainContent" aria-label="主要内容">
+    <main class="main-content" id="mainContent" aria-label="主要内容" tabindex="-1">
         <!-- 离线横幅：参考 koder.ai offline state —— 持续提示直到恢复连接 -->
         <div id="offlineBanner" class="offline-banner" role="status" aria-live="polite" hidden>
           <span class="offline-ico" data-icon="wifi-off" aria-hidden="true"></span> 当前处于离线状态，部分功能不可用
@@ -222,18 +236,18 @@
 
     <!-- 依赖安装遮罩层：高斯模糊背景 + 安装方式选择 + 动画进度条 + 实时日志 -->
     <div class="dep-overlay" id="depOverlay" role="presentation">
-        <div class="dep-card" role="dialog" aria-modal="true" aria-labelledby="depTitle">
+        <div class="dep-card" role="dialog" aria-modal="true" aria-labelledby="depTitleChoose">
             <!-- 步骤一：选择安装方式 -->
             <div class="dep-choose" id="depChoose">
                 <div class="dep-head">
                     <div class="dep-orb"></div>
                     <div>
-                        <h2>安装运行依赖</h2>
+                        <h2 id="depTitleChoose">安装运行依赖</h2>
                         <p class="dep-stage">首次运行需安装 ToolDelta 依赖，请选择安装方式。</p>
                     </div>
                 </div>
                 <div class="dep-options">
-                    <button class="dep-opt" onclick="triggerDepInstall('local')">
+                    <button type="button" class="dep-opt" onclick="triggerDepInstall('local')">
                         <div class="dep-opt-ico" data-icon="package" aria-hidden="true"></div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">本地安装<span class="dep-opt-sub">（离线）</span></div>
@@ -241,7 +255,7 @@
                         </div>
                         <span class="dep-opt-tag">可能版本较旧</span>
                     </button>
-                    <button class="dep-opt" onclick="triggerDepInstall('online')">
+                    <button type="button" class="dep-opt" onclick="triggerDepInstall('online')">
                         <div class="dep-opt-ico" data-icon="globe" aria-hidden="true"></div>
                         <div class="dep-opt-main">
                             <div class="dep-opt-title">网络安装<span class="dep-opt-sub">（在线）</span></div>
@@ -268,8 +282,8 @@
                 </div>
                 <div class="dep-log" id="depLog"></div>
                 <div class="dep-actions" id="depActions" style="display:none">
-                    <button class="btn btn-outline" onclick="showDepChoose()">更换方式</button>
-                    <button class="btn btn-primary" onclick="triggerDepInstall()">重试安装</button>
+                    <button type="button" class="btn btn-outline" onclick="showDepChoose()">更换方式</button>
+                    <button type="button" class="btn btn-primary" onclick="triggerDepInstall()">重试安装</button>
                 </div>
             </div>
         </div>
@@ -280,8 +294,8 @@
             <h2 id="confirmTitle">确认</h2>
             <p id="confirmMessage" class="modal-message"></p>
             <div class="modal-actions">
-                <button class="btn btn-outline" onclick="closeConfirm(false)">取消</button>
-                <button class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirm(true)">确定</button>
+                <button type="button" class="btn btn-outline" onclick="closeConfirm(false)">取消</button>
+                <button type="button" class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirm(true)">确定</button>
             </div>
         </div>
     </div>
@@ -294,8 +308,8 @@
                 <input type="text" id="promptInput" class="form-control" onkeydown="if(event.key==='Enter')closePrompt(true)">
             </div>
             <div class="modal-actions">
-                <button class="btn btn-outline" onclick="closePrompt(false)">取消</button>
-                <button class="btn btn-primary" onclick="closePrompt(true)">确定</button>
+                <button type="button" class="btn btn-outline" onclick="closePrompt(false)">取消</button>
+                <button type="button" class="btn btn-primary" onclick="closePrompt(true)">确定</button>
             </div>
         </div>
     </div>
@@ -306,9 +320,9 @@
             <h2 id="notifyTitle">通知历史</h2>
             <div id="notifyList" class="notify-list" role="log" aria-live="polite" aria-label="通知列表"></div>
             <div class="modal-actions">
-                <button class="btn btn-outline btn-sm" id="notifyReadAllBtn" onclick="_markAllRead()">全部已读</button>
-                <button class="btn btn-outline btn-sm" id="notifyClearBtn" onclick="_clearNotifyHistory()">清空</button>
-                <button class="btn btn-outline" onclick="closeModal('notifyModal')">关闭</button>
+                <button type="button" class="btn btn-outline btn-sm" id="notifyReadAllBtn" onclick="_markAllRead()">全部已读</button>
+                <button type="button" class="btn btn-outline btn-sm" id="notifyClearBtn" onclick="_clearNotifyHistory()">清空</button>
+                <button type="button" class="btn btn-outline" onclick="closeModal('notifyModal')">关闭</button>
             </div>
         </div>
     </div>
@@ -331,7 +345,7 @@
         </div>
     </div>
     <!-- 移动端悬浮触发按钮（仅小屏显示，CSS 控制）—— 使用 SVG 图标替代 Unicode ⌘ -->
-    <button class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板"><span data-icon="command" aria-hidden="true"></span></button>
+    <button type="button" class="palette-trigger" id="paletteTrigger" data-tip="命令面板 ⌘K" aria-label="打开命令面板"><span data-icon="command" aria-hidden="true"></span></button>
 
     <!-- 键盘快捷键帮助（参考 GitHub `?` 快捷键速查） -->
     <div class="modal-overlay" id="shortcutsModal" role="presentation">
@@ -342,12 +356,16 @@
                 <div class="shortcut-row"><span class="shortcut-desc">聚焦页面搜索框</span><span class="shortcut-keys"><kbd>/</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">查看快捷键速查</span><span class="shortcut-keys"><kbd>?</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">关闭弹窗 / 抽屉</span><span class="shortcut-keys"><kbd>esc</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">跳转仪表盘</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>d</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">跳转控制台</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>c</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">跳转插件管理</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>p</kbd></span></div>
+                <div class="shortcut-row"><span class="shortcut-desc">跳转插件市场</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>m</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">切换主题</span><span class="shortcut-keys"><kbd>g</kbd> <kbd>t</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">命令面板内移动</span><span class="shortcut-keys"><kbd>↑</kbd> <kbd>↓</kbd></span></div>
                 <div class="shortcut-row"><span class="shortcut-desc">执行选中命令</span><span class="shortcut-keys"><kbd>↵</kbd></span></div>
             </div>
             <div class="modal-actions">
-                <button class="btn btn-outline" onclick="closeModal('shortcutsModal')">明白了</button>
+                <button type="button" class="btn btn-outline" onclick="closeModal('shortcutsModal')">明白了</button>
             </div>
         </div>
     </div>

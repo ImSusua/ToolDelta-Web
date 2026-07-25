@@ -1,17 +1,22 @@
 import os
 import re
+import sys
 import threading
 from datetime import datetime
 
 class LogService:
     # 内存中当日日志行数上限，超出滚动截断，防止长期运行内存泄漏（P1-4）
     MAX_LOG_LINES = 5000
+    # 写文件失败时的内存兜底队列上限：保留最近 N 条便于事后排查（P1-5）
+    MAX_FALLBACK_QUEUE = 200
 
     def __init__(self):
         self._logs_dir = None
         self._today = None
         self._today_lines = []
         self._lock = threading.RLock()
+        # 写文件失败时的内存兜底队列：避免日志完全丢失（P1-5）
+        self._fallback_queue = []
 
     def init_app(self, app):
         self._logs_dir = os.path.join(app.instance_path, "logs")
@@ -54,8 +59,19 @@ class LogService:
                 try:
                     with open(path, "a", encoding="utf-8") as f:
                         f.write(line + "\n")
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 静默 fallback 到 stderr + 内存兜底队列，绝不向调用方抛出（P1-5）
+                    # 避免日志写入失败拖垮主流程；同时保留线索便于事后排查
+                    self._fallback_queue.append(line)
+                    if len(self._fallback_queue) > self.MAX_FALLBACK_QUEUE:
+                        self._fallback_queue = self._fallback_queue[-self.MAX_FALLBACK_QUEUE:]
+                    try:
+                        sys.stderr.write("[LOG_FALLBACK] " + str(e) + " | " + line + "\n")
+                    except Exception:
+                        pass
+
+    def debug(self, message, source="SYSTEM"):
+        self._write("DEBUG", source, message)
 
     def info(self, message, source="SYSTEM"):
         self._write("INFO", source, message)
@@ -65,6 +81,11 @@ class LogService:
 
     def error(self, message, source="SYSTEM"):
         self._write("ERROR", source, message)
+
+    def get_fallback_queue(self):
+        """返回写文件失败的兜底队列快照，供诊断接口查看。"""
+        with self._lock:
+            return list(self._fallback_queue)
 
     def get_today_logs(self, tail=500):
         self._rotate()
@@ -108,7 +129,7 @@ class LogService:
 
     # ─── 日志增强：分级 / 搜索 / 过滤 / 导出 ─────────────
 
-    LEVELS = ["INFO", "WARN", "ERROR"]
+    LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"]
 
     @staticmethod
     def _parse_line(line):

@@ -12,6 +12,7 @@
   var choose = document.getElementById('depChoose');
   var run = document.getElementById('depRun');
   var title = document.getElementById('depTitle');
+  var dialog = overlay.querySelector('.dep-card');
 
   // 安装完成后是否已自动隐藏过，避免 socket 重复推送时再次弹遮罩
   var _completed = false;
@@ -20,11 +21,17 @@
 
   function showOverlay() { overlay.classList.add('active'); }
   function hideOverlay() { overlay.classList.remove('active'); }
-  function showRun() { choose.style.display = 'none'; run.style.display = 'block'; }
+  function showRun() {
+    choose.style.display = 'none'; run.style.display = 'block';
+    // 切到进度步骤时，aria-labelledby 指向 depTitle（进度步骤标题）
+    if (dialog) dialog.setAttribute('aria-labelledby', 'depTitle');
+  }
   function showChoose() {
     run.style.display = 'none';
     choose.style.display = 'block';
     actions.style.display = 'none';
+    // 切到选择步骤时，aria-labelledby 指向 depTitleChoose（选择步骤标题），避免悬空引用
+    if (dialog) dialog.setAttribute('aria-labelledby', 'depTitleChoose');
   }
 
   function applyDep(d) {

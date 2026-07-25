@@ -14,6 +14,7 @@ import time
 import json
 import shutil
 import subprocess
+import threading
 
 from app.tooldelta_manager import tooldelta_manager
 from app.plugin_service import plugin_service
@@ -27,6 +28,10 @@ class DashboardService:
         self.version = "1.0"
         self.app = None
         self._build_hash_cache = None
+        # CPU 后台采样相关字段
+        self._last_cpu_sample = 0.0
+        self._cpu_sampler_running = False
+        self._cpu_lock = threading.Lock()
 
     # ─── 初始化 ───────────────────────────────────────────────
 
@@ -35,6 +40,15 @@ class DashboardService:
         self.app = app
         # 快照版本号（风格B：纯只读聚合，不依赖后台线程）
         self.version = self._read_version()
+
+        # 启动时预加载 build hash，避免请求期 subprocess 阻塞 10s
+        try:
+            self._build_hash_cache = self._compute_build_hash()
+        except Exception:
+            self._build_hash_cache = "unknown"
+
+        # 启动后台 CPU 采样线程，避免请求期阻塞（之前每次采样会阻塞请求线程约 100ms）
+        self._start_cpu_sampler()
 
         try:
             log_service.info("状态仪表盘服务已初始化", "DASHBOARD")
@@ -73,9 +87,20 @@ class DashboardService:
         }
 
     def _get_build_hash(self):
-        """构建哈希：优先读 build_info.json，否则实时取 git 短哈希（进程内缓存）。"""
-        if self._build_hash_cache is not None:
-            return self._build_hash_cache
+        """构建哈希：直接返回启动时预加载的缓存值，绝不阻塞请求线程。
+
+        缓存为 None 时返回 "unknown"（init_app 预加载失败的场景）。
+        实际计算在 init_app 中通过 _compute_build_hash 一次性完成。
+        """
+        if self._build_hash_cache is None:
+            return "unknown"
+        return self._build_hash_cache
+
+    def _compute_build_hash(self):
+        """构建哈希实际计算逻辑：优先读 build_info.json，否则取 git 短哈希。
+
+        只在 init_app 中调用一次，避免每次请求都触发 subprocess.run（最多阻塞 10s）。
+        """
         result = "nogit"
         try:
             here = os.path.dirname(os.path.abspath(__file__))
@@ -86,9 +111,7 @@ class DashboardService:
                     with open(bi, "r", encoding="utf-8") as f:
                         d = json.load(f)
                     if d.get("git"):
-                        result = d["git"]
-                        self._build_hash_cache = result
-                        return result
+                        return d["git"]
                 except Exception:
                     pass
             out = subprocess.run(
@@ -99,7 +122,6 @@ class DashboardService:
                 result = out.stdout.strip()
         except Exception:
             pass
-        self._build_hash_cache = result
         return result
 
     @staticmethod
@@ -118,13 +140,36 @@ class DashboardService:
             pass
         return "—"
 
-    # ─── CPU 近似采样（/proc/stat 两次采样） ──────────────────
+    # ─── CPU 近似采样（后台线程周期采样，请求直接读缓存） ────
+
+    def _start_cpu_sampler(self):
+        """启动后台 daemon 线程周期采样 CPU，避免请求线程阻塞。"""
+        with self._cpu_lock:
+            if self._cpu_sampler_running:
+                return
+            self._cpu_sampler_running = True
+        t = threading.Thread(target=self._cpu_sampler_loop, daemon=True)
+        t.start()
+
+    def _cpu_sampler_loop(self):
+        """后台循环：每 3 秒采样一次 CPU 写入 self._last_cpu_sample。
+
+        采样采用 /proc/stat 两次读 + sleep(1) 的方式（在后台线程中阻塞安全）。
+        非 Linux 或读不到时保持 0.0。
+        """
+        while True:
+            try:
+                self._last_cpu_sample = self._compute_cpu_sample()
+            except Exception:
+                pass
+            # 总周期约 3 秒（采样间隔 1s + 等待 2s）
+            time.sleep(2)
 
     @staticmethod
-    def _sample_cpu() -> float:
-        """读 /proc/stat 首行，隔 0.1s 再读，按 (1 - delta_idle/total) 计算使用率。
+    def _compute_cpu_sample() -> float:
+        """读 /proc/stat 首行，隔 1s 再读，按 (1 - delta_idle/total) 计算使用率。
 
-        非 Linux 或读不到时返回 0.0。
+        仅在后台线程调用；非 Linux 或读不到时返回 0.0。
         """
         try:
             if not os.path.isfile("/proc/stat"):
@@ -139,7 +184,7 @@ class DashboardService:
                 return idle, total
 
             idle1, total1 = _read()
-            time.sleep(0.1)
+            time.sleep(1)
             idle2, total2 = _read()
 
             total_delta = total2 - total1
@@ -150,6 +195,15 @@ class DashboardService:
             return round(max(0.0, min(100.0, cpu)), 1)
         except Exception:
             return 0.0
+
+    def _sample_cpu(self) -> float:
+        """直接返回后台线程维护的 CPU 采样缓存，绝不阻塞请求线程。
+
+        若后台线程尚未启动（如直接调用 get_dashboard 而未经 init_app）则惰性启动。
+        """
+        if not self._cpu_sampler_running:
+            self._start_cpu_sampler()
+        return self._last_cpu_sample
 
     # ─── 内存（/proc/meminfo） ───────────────────────────────
 

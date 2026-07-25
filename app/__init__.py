@@ -1,4 +1,7 @@
 import os
+import sys
+import threading
+import traceback
 from datetime import timedelta
 from flask import Flask, session, redirect, request
 from flask_socketio import SocketIO
@@ -6,13 +9,40 @@ from config import Config
 
 socketio = SocketIO()
 
+
+def _thread_excepthook(args):
+    """daemon 线程未捕获异常兜底：避免线程静默消亡而无任何日志（P1-5）"""
+    try:
+        from app.log_service import log_service
+        log_service.error(
+            f"未捕获异常 thread={args.thread.name}: {args.exc_value}",
+            source="SYSTEM"
+        )
+    except Exception:
+        pass
+
+
+def _sys_excepthook(exc_type, exc_value, exc_tb):
+    """主线程未捕获异常兜底：写入日志后再交给默认 hook 输出到 stderr（P1-5）"""
+    try:
+        if not issubclass(exc_type, KeyboardInterrupt):
+            from app.log_service import log_service
+            log_service.error(
+                "未捕获异常: " + "".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+                source="SYSTEM"
+            )
+    except Exception:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(Config)
     web_data_dir = app.config.get("WEB_DATA_DIR")
     if web_data_dir:
         os.makedirs(web_data_dir, exist_ok=True)
-    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+    _flask_env = os.environ.get("FLASK_ENV", "production").lower()
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0 if _flask_env == "development" else 31536000
     app.config["SESSION_PERMANENT"] = True
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     # 安全 cookie：默认 False 保持本地/HTTP 开发可用，生产环境可通过环境变量强制 HTTPS
@@ -36,14 +66,14 @@ def create_app():
     app.register_blueprint(scheduler.bp)
     app.register_blueprint(dashboard.bp)
 
-    # Socket.IO CORS:默认仅允许同源,生产可通过环境变量 SOCKETIO_CORS_ALLOWED_ORIGINS
-    # 配置逗号分隔白名单(如 https://panel.example.com)
+    # Socket.IO CORS:默认仅允许同源(携带会话 cookie 时禁止任意跨域连接),
+    # 生产可通过环境变量 SOCKETIO_CORS_ALLOWED_ORIGINS 配置逗号分隔白名单(如 https://panel.example.com)
     _sio_origins_env = os.environ.get("SOCKETIO_CORS_ALLOWED_ORIGINS", "").strip()
     if _sio_origins_env:
         _sio_origins = [o.strip() for o in _sio_origins_env.split(",") if o.strip()]
     else:
-        # 同源:仅当前 host
-        _sio_origins = "*"
+        # 同源:Flask-SocketIO 中 None 表示仅允许同源连接
+        _sio_origins = None
     socketio.init_app(app, cors_allowed_origins=_sio_origins, async_mode="threading")
 
     from app.tooldelta_manager import tooldelta_manager
@@ -69,8 +99,8 @@ def create_app():
     # 避免全新 Linux 环境“点启动才装、30s 超时装不完、起不来”的问题
     try:
         tooldelta_manager._ensure_main_program()
-    except Exception:
-        pass
+    except Exception as e:
+        log_service.error("主程序初始化失败: " + str(e), "SYSTEM")
     dependency_service.maybe_auto_install()
 
     # 新增模块（P1/P2 增强）
@@ -141,5 +171,10 @@ def create_app():
         if os.environ.get("ENABLE_HSTS", "false").lower() in ("1", "true", "yes"):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
+
+    # 注册全局异常钩子：daemon 线程与主线程未捕获异常均记录到日志，
+    # 避免线程静默消亡后无任何线索可查（P1-5）
+    threading.excepthook = _thread_excepthook
+    sys.excepthook = _sys_excepthook
 
     return app

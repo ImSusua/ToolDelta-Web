@@ -4,6 +4,10 @@ import json
 from flask import current_app
 
 class CommandScanner:
+    def __init__(self):
+        # mtime 缓存：(plugin_dir_mtime, bridge_registry_mtime, scan_result)
+        self._scan_cache = None
+
     def scan_plugin(self, plugin_dir, plugin_name):
         init_py = os.path.join(plugin_dir, "__init__.py")
         if not os.path.isfile(init_py):
@@ -40,6 +44,21 @@ class CommandScanner:
 
     def scan_all_plugins(self):
         pdir = current_app.config["TOOLDELTA_CLASSIC_PLUGIN_PATH"]
+        # mtime 缓存：插件目录与 bridge registry 文件均未变化时直接返回缓存结果，
+        # 避免每次请求都 AST 解析所有插件源码
+        try:
+            pdir_mtime = os.path.getmtime(pdir)
+        except Exception:
+            pdir_mtime = 0
+        registry_path = self._bridge_registry_path()
+        try:
+            registry_mtime = os.path.getmtime(registry_path) if registry_path else 0
+        except Exception:
+            registry_mtime = 0
+        cache_key = (pdir_mtime, registry_mtime)
+        if self._scan_cache is not None and self._scan_cache[0] == cache_key:
+            return self._scan_cache[1]
+
         result = []
         if os.path.isdir(pdir):
             for d in sorted(os.listdir(pdir)):
@@ -80,16 +99,24 @@ class CommandScanner:
                 })
             for e in result:
                 e["count"] = len(e["commands"])
+        self._scan_cache = (cache_key, result)
         return result
+
+    def _bridge_registry_path(self):
+        """返回 WebPanelBridge 命令注册表路径（不存在配置时返回 None，容错）。"""
+        try:
+            base = current_app.config.get("TOOLDELTA_PLUGIN_DATA_DIR")
+            if not base:
+                return None
+            return os.path.join(base, "WebPanelBridge", "commands_registry.json")
+        except Exception:
+            return None
 
     def _load_bridge_registry(self):
         """读取 WebPanelBridge 运行时记录到插件数据目录的命令注册表(容错)。"""
         try:
-            base = current_app.config.get("TOOLDELTA_PLUGIN_DATA_DIR")
-            if not base:
-                return {}
-            path = os.path.join(base, "WebPanelBridge", "commands_registry.json")
-            if not os.path.isfile(path):
+            path = self._bridge_registry_path()
+            if not path or not os.path.isfile(path):
                 return {}
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)

@@ -309,6 +309,7 @@ window.TD_PALETTE = (function () {
 
     function _open() {
         if (isOpen) return;
+        this._lastTrigger = document.activeElement;
         if (!overlayEl) _ensureDOM();
         if (!overlayEl) return;
         isOpen = true;
@@ -324,6 +325,9 @@ window.TD_PALETTE = (function () {
         isOpen = false;
         if (overlayEl) overlayEl.classList.remove('active');
         _clearInert();
+        if (this._lastTrigger && typeof this._lastTrigger.focus === 'function') {
+            try { this._lastTrigger.focus(); } catch(e) {}
+        }
     }
 
     function _ensureDOM() {

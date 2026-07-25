@@ -880,7 +880,7 @@ function _renderNotifyList() {
         return;
     }
     var esc = window._escHtml || String;
-    list.innerHTML = _TOAST_HISTORY.map(function(it) {
+    list.innerHTML = _TOAST_HISTORY.map(function(it, i) {
         var cls = 'notify-item notify-' + it.type;
         var ico = it.type === 'error' ? '⚠️' : (it.type === 'warning' ? '⚡' : (it.type === 'success' ? '✓' : 'ℹ'));
         // it.action 现在是 { label, fn } 对象；兼容从 localStorage 恢复的 actionLabel 字符串
@@ -890,7 +890,7 @@ function _renderNotifyList() {
         } else if (it.actionLabel) {
             actLabel = it.actionLabel;
         }
-        var actHtml = actLabel ? '<button class="notify-action" type="button">' + esc(actLabel) + '</button>' : '';
+        var actHtml = actLabel ? '<button class="notify-action" type="button" data-idx="' + i + '">' + esc(actLabel) + '</button>' : '';
         return '<div class="' + cls + '">' +
             '<span class="notify-ico" aria-hidden="true">' + ico + '</span>' +
             '<div class="notify-body"><div class="notify-msg">' + esc(it.msg) + '</div>' +
@@ -899,8 +899,9 @@ function _renderNotifyList() {
     }).join('');
     // 绑定 action 按钮 click 事件（修复死按钮 bug）
     var btns = list.querySelectorAll('.notify-action');
-    btns.forEach(function(btn, i) {
-        var item = _TOAST_HISTORY[i];
+    btns.forEach(function(btn) {
+        var idx = parseInt(btn.getAttribute('data-idx'), 10);
+        var item = _TOAST_HISTORY[idx];
         if (!item || !item.action || !(item.action.fn || item.action.handler)) return;
         var fn = item.action.fn || item.action.handler;
         btn.addEventListener('click', function() {
@@ -930,3 +931,140 @@ if (document.readyState === 'loading') {
 } else {
     _updateNotifyBadge();
 }
+
+// ════════════════════════════════════════════════════════════════
+// 全局 UX 优化 v2（参考 Linear / Vercel / GitHub Primer）
+// — Toast 优先级队列 / showBtnSuccess 工具函数
+// 仅追加新代码，不修改既有 showToast / removeToast
+// ════════════════════════════════════════════════════════════════
+
+// ─── Toast 优先级队列：error > warning > success > info，error 强制置顶 ───
+// 通过 MutationObserver 监听 #toastContainer 子节点变动，自动按优先级稳定排序。
+// Observer 回调在 microtask 中、paint 之前触发，因此重排不会产生视觉闪烁。
+// appendChild 移动已存在节点（非克隆），_timer / _removed 等附加属性得以保留。
+(function() {
+    var _PRIORITY = { error: 0, warning: 1, success: 2, info: 3 };
+    function _toastTypeOf(el) {
+        if (!el || !el.classList) return 'info';
+        if (el.classList.contains('error'))   return 'error';
+        if (el.classList.contains('warning')) return 'warning';
+        if (el.classList.contains('success')) return 'success';
+        return 'info';
+    }
+    function _toastPriority(type) {
+        return (_PRIORITY[type] != null) ? _PRIORITY[type] : 99;
+    }
+    function _reorderToasts() {
+        var container = document.getElementById('toastContainer');
+        if (!container) return;
+        var children = container.children;
+        if (!children || children.length < 2) return;
+        var toasts = Array.prototype.slice.call(children);
+        // 检查是否已按优先级升序，已排序则跳过 DOM 操作避免打断动画
+        var needsReorder = false;
+        for (var i = 1; i < toasts.length; i++) {
+            if (_toastPriority(_toastTypeOf(toasts[i - 1])) >
+                _toastPriority(_toastTypeOf(toasts[i]))) {
+                needsReorder = true;
+                break;
+            }
+        }
+        if (!needsReorder) return;
+        // 稳定排序：相同优先级保持原相对顺序
+        toasts.sort(function(a, b) {
+            return _toastPriority(_toastTypeOf(a)) - _toastPriority(_toastTypeOf(b));
+        });
+        for (var j = 0; j < toasts.length; j++) {
+            container.appendChild(toasts[j]);
+        }
+    }
+    window._toastPriority = _toastPriority;
+    window._toastTypeOf = _toastTypeOf;
+    window._reorderToasts = _reorderToasts;
+    // 不支持 MutationObserver 的环境（极旧浏览器）静默降级，不影响功能
+    if (typeof MutationObserver === 'undefined') return;
+    var _obs = new MutationObserver(function() { _reorderToasts(); });
+    function _setup() {
+        var c = document.getElementById('toastContainer');
+        if (c && !c._tdToastObs) {
+            _obs.observe(c, { childList: true });
+            c._tdToastObs = true;
+            _reorderToasts();
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _setup);
+    } else {
+        _setup();
+    }
+})();
+
+// ─── showBtnSuccess(btn)：操作成功后短暂显示 ✓ 后恢复（500ms） ───
+// 用法（与 tdLock 配合）：
+//   tdLock(btn, function() {
+//       return doSave().then(function() { showBtnSuccess(btn); });
+//   });
+// 500ms 后自动恢复原始 innerHTML / className / disabled 状态。
+// 重入保护：同一按钮在成功态期间再次调用会被忽略。
+window.showBtnSuccess = function(btn) {
+    if (!btn || btn._tdSuccessTimer) return;
+    var origHTML = btn.innerHTML;
+    var origClass = btn.className;
+    var origDisabled = btn.disabled;
+    btn.disabled = true;
+    btn.className = origClass + ' btn-success-state';
+    // SVG 勾选图标，避免 emoji 跨平台渲染差异
+    btn.innerHTML = '<span class="btn-success-check" aria-label="成功">' +
+        '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+        'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>';
+    btn._tdSuccessTimer = setTimeout(function() {
+        btn.className = origClass;
+        btn.innerHTML = origHTML;
+        btn.disabled = origDisabled;
+        btn._tdSuccessTimer = null;
+    }, 500);
+};
+
+// ─── 键盘快捷键帮助入口（sidebar「键盘快捷键 ?」按钮调用） ───
+// 包装 _openModal，供 onclick 内联调用；若 _openModal 尚未就绪则静默。
+function openShortcutsHelp() {
+    if (typeof _openModal === 'function') _openModal('shortcutsModal');
+}
+
+// ─── 全局快捷键：g-prefix 导航序列（参考 GitHub g d / g c / g p / g m） ───
+// g d → 仪表盘(/), g c → 控制台(/console), g p → 插件(/plugins), g m → 市场(/market)
+// 与上方 g t 切换主题的 _gKeyTimer 相互独立：两个 listener 各自维护序列窗口，
+// 按下 g 时同时启动两个计时器；按下 d/c/p/m 仅触发导航，按下 t 仅触发主题切换。
+var _gNavTimer = null;
+var _G_NAV_MAP = { d: '/', c: '/console', p: '/plugins', m: '/market' };
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = (e.target && e.target.tagName || '').toLowerCase();
+    var typing = (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable));
+    if (typing) {
+        // 输入态下若残留窗口则清掉，避免离开输入框后误触发
+        if (_gNavTimer) { clearTimeout(_gNavTimer); _gNavTimer = null; }
+        return;
+    }
+    // g 启动序列窗口（不 preventDefault，避免阻断浏览器原生快捷键兜底）
+    if (e.key === 'g' || e.key === 'G') {
+        _gNavTimer = setTimeout(function() { _gNavTimer = null; }, 750);
+        return;
+    }
+    if (_gNavTimer) {
+        var path = _G_NAV_MAP[e.key.toLowerCase()];
+        // 无论是否命中都清窗口，避免连续触发
+        clearTimeout(_gNavTimer);
+        _gNavTimer = null;
+        if (path) {
+            e.preventDefault();
+            // 已在目标页则不跳转，避免重复刷新
+            if (location.pathname !== path) {
+                if (typeof window._navStart === 'function') window._navStart();
+                if (window.tdPref) tdPref.pushRecent(path);
+                location.href = path;
+            }
+        }
+    }
+});

@@ -16,6 +16,8 @@ var HISTORY_KEY = 'td_console_history';
 var history = loadHistory();
 var histIdx = -1;          // -1 表示正在输入新命令
 var cmdLibrary = [];      // 来自 /api/commands 的所有命令 trigger，用于补全
+// 命令历史下拉专用（内存维护，最近 50 条）：与 ↑/↓ 用的 history 分离，互不干扰
+var _cmdHistory = history.slice(-50);
 
 function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -29,9 +31,27 @@ function saveHistory(cmd) {
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch (e) {}
 }
 
+// 维护命令历史下拉数组（去重 + 追加 + 上限 50）
+function _pushCmdHistory(cmd) {
+    if (!cmd) return;
+    _cmdHistory = _cmdHistory.filter(function (c) { return c !== cmd; });
+    _cmdHistory.push(cmd);
+    if (_cmdHistory.length > 50) _cmdHistory = _cmdHistory.slice(-50);
+}
+
+// 日志级别检测：按优先级匹配关键字，返回外层 div 应加的 CSS 类名（不破坏内层 ANSI 着色）
+function _detectLogLevel(text) {
+    // 优先级：ERROR > WARN > DEBUG > INFO（更严重的优先标注）
+    if (/\bERROR\b/i.test(text)) return 'log-error';
+    if (/\bWARN(ING)?\b/i.test(text)) return 'log-warn';
+    if (/\bDEBUG\b/i.test(text)) return 'log-debug';
+    if (/\bINFO\b/i.test(text)) return 'log-info';
+    return '';
+}
+
 function appendLine(html) {
     if (!body) return;
-    // XSS 防护：先用正则过滤脚本、事件处理器、data URI 等明显危险内容
+    // XSS 防护：先用正则过滤脚本、事件处理器、data URI 等明显危险内容（作为第一道防线）
     var safe = (html || '')
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
         .replace(/<img[^>]*onerror\s*=[^>]*>/gi, '')
@@ -39,20 +59,55 @@ function appendLine(html) {
         .replace(/<[^>]*\bon[a-z]+\s*=\s*[^>]*/gi, function(m){return m.replace(/on\w+\s*=\s*/gi,'data-removed=');})
         .replace(/javascript\s*:/gi, 'blocked:')
         .replace(/data\s*:\s*[^;\s"']*/gi, 'blocked:');
-    var atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
+    // 暂停滚动模式下：不判断 atBottom，强制不滚动到底部
+    var atBottom = _pauseScroll ? false : (body.scrollHeight - body.scrollTop - body.clientHeight < 50);
     var div = document.createElement('div');
-    div.innerHTML = safe;
-    // 二次清理：只允许 span 标签，移除任何 script/iframe/object 等可疑节点
-    var tags = div.querySelectorAll('*');
-    for (var i = 0; i < tags.length; i++) {
+    // 安全清理：用 DOMParser 在离屏文档中解析 raw，再 sanitize 后将节点迁入 div，
+    // 避免直接 div.innerHTML = raw 时 <img onerror> 等被触发
+    var parsed = new DOMParser().parseFromString('<root>' + safe + '</root>', 'text/html');
+    var root = (parsed.body && parsed.body.firstChild) ? parsed.body.firstChild : parsed.createElement('root');
+    var tags = root.querySelectorAll('*');
+    for (var i = tags.length - 1; i >= 0; i--) {
         var tag = tags[i];
+        // 移除所有 on* 事件属性与可疑 href/src，防止 DOMParser 仍残留的事件句柄
+        var attrs = tag.attributes;
+        for (var j = attrs.length - 1; j >= 0; j--) {
+            var an = attrs[j].name.toLowerCase();
+            if (an.indexOf('on') === 0) {
+                tag.removeAttribute(attrs[j].name);
+            } else if (an === 'href' || an === 'src' || an === 'xlink:href') {
+                var av = (attrs[j].value || '').trim();
+                if (/^\s*(javascript|data)\s*:/i.test(av)) {
+                    tag.removeAttribute(attrs[j].name);
+                }
+            }
+        }
+        // 非 span 标签：保留其文本内容，但剥离标签本身
         if (tag.tagName.toLowerCase() !== 'span') {
-            // 非 span 标签：保留其文本内容，但剥离标签本身
             var parent = tag.parentNode;
             while (tag.firstChild) {
                 parent.insertBefore(tag.firstChild, tag);
             }
             parent.removeChild(tag);
+        }
+    }
+    // 将清理后的子节点迁入 div（不直接 innerHTML=raw）
+    while (root.firstChild) {
+        div.appendChild(root.firstChild);
+    }
+    // 添加时间戳前缀（默认隐藏，由 .show-ts 控制可见性）
+    var tsSpan = document.createElement('span');
+    tsSpan.className = 'c-ts';
+    tsSpan.textContent = _formatTs(new Date());
+    div.insertBefore(tsSpan, div.firstChild);
+    // 日志级别着色：仅在外层 div 加级别类，不影响内层 ANSI 着色
+    var lvl = _detectLogLevel(div.textContent || '');
+    if (lvl) div.classList.add(lvl);
+    // 应用当前过滤状态（避免批量插入后再回流）
+    if (_filterQuery) {
+        var text = div.textContent || '';
+        if (text.toLowerCase().indexOf(_filterQuery) === -1) {
+            div.classList.add('is-filtered-out');
         }
     }
     // 批量插入缓冲：高频输出（如日志刷屏）时合并到下一帧统一插入，避免逐行重排卡顿
@@ -82,12 +137,130 @@ function _flushBatch() {
     if (info.atBottom) {
         body.scrollTop = body.scrollHeight;
     } else {
-        // 用户未在底部：累计未读，显示新消息提示
+        // 用户未在底部（或暂停滚动）：累计未读，显示新消息提示
+        // 暂停模式下不自动滚动但仍累计未读，便于用户感知有新消息到达
         _newMsgCount += info.count;
         if (_pillCount) _pillCount.textContent = _newMsgCount;
         if (_pill) _pill.style.display = '';
     }
 }
+
+/* ─── 工具栏：暂停滚动 / 时间戳 / 搜索过滤 ─────────────────── */
+
+var _pauseScroll = false;       // 暂停自动滚动到最新
+var _showTimestamps = false;    // 显示时间戳
+var _showLineNumbers = false;   // 显示行号
+var _filterQuery = '';          // 当前过滤关键词（小写）
+
+// 格式化时间戳为 HH:MM:SS.mmm
+function _formatTs(d) {
+    var h = String(d.getHours()).padStart(2, '0');
+    var m = String(d.getMinutes()).padStart(2, '0');
+    var s = String(d.getSeconds()).padStart(2, '0');
+    var ms = String(d.getMilliseconds()).padStart(3, '0');
+    return h + ':' + m + ':' + s + '.' + ms;
+}
+
+// 暂停滚动：开启后新消息不滚动到底部，方便用户阅读历史
+function togglePauseScroll() {
+    _pauseScroll = !_pauseScroll;
+    var btn = document.getElementById('pauseScrollBtn');
+    var bar = document.querySelector('.console-bar');
+    if (btn) {
+        btn.setAttribute('aria-pressed', _pauseScroll ? 'true' : 'false');
+        var lbl = btn.querySelector('.lbl');
+        if (lbl) lbl.textContent = _pauseScroll ? '继续' : '暂停';
+        btn.setAttribute('aria-label', _pauseScroll ? '继续自动滚动' : '暂停自动滚动');
+    }
+    if (bar) bar.classList.toggle('is-paused', _pauseScroll);
+    // 继续滚动时立即跳到底部
+    if (!_pauseScroll) {
+        scrollToBottom();
+    }
+    if (typeof showToast === 'function') {
+        showToast(_pauseScroll ? '已暂停自动滚动' : '已恢复自动滚动', 'info');
+    }
+}
+
+// 时间戳开关：开启后在每行行首显示时间戳
+function toggleTimestamps() {
+    _showTimestamps = !_showTimestamps;
+    var btn = document.getElementById('timestampBtn');
+    if (btn) {
+        btn.setAttribute('aria-pressed', _showTimestamps ? 'true' : 'false');
+        btn.setAttribute('aria-label', _showTimestamps ? '隐藏时间戳' : '显示时间戳');
+    }
+    if (body) body.classList.toggle('show-ts', _showTimestamps);
+}
+
+// 行号开关：开启后在每行左侧显示行号（CSS counter 实现，自动随行增减重编号）
+function toggleLineNumbers() {
+    _showLineNumbers = !_showLineNumbers;
+    var btn = document.getElementById('lineNumberBtn');
+    if (btn) {
+        btn.setAttribute('aria-pressed', _showLineNumbers ? 'true' : 'false');
+        btn.setAttribute('aria-label', _showLineNumbers ? '隐藏行号' : '显示行号');
+    }
+    if (body) body.classList.toggle('show-lines', _showLineNumbers);
+}
+
+// 搜索过滤：仅显示包含关键词的行（实时，300ms 防抖）
+var _filterTimer = null;
+function _setupSearchFilter() {
+    var inp = document.getElementById('consoleSearch');
+    var clear = document.getElementById('consoleSearchClear');
+    if (!inp) return;
+    inp.addEventListener('input', function () {
+        if (clear) clear.style.display = inp.value ? 'flex' : 'none';
+        if (_filterTimer) clearTimeout(_filterTimer);
+        _filterTimer = setTimeout(function () {
+            _filterQuery = (inp.value || '').trim().toLowerCase();
+            _applyFilter();
+        }, 300);
+    });
+    // Esc 清除过滤
+    inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            inp.value = '';
+            if (clear) clear.style.display = 'none';
+            _filterQuery = '';
+            _applyFilter();
+            e.preventDefault();
+        }
+    });
+}
+
+// 应用过滤：遍历所有行，隐藏不匹配的
+function _applyFilter() {
+    if (!body) return;
+    var children = body.children;
+    for (var i = 0; i < children.length; i++) {
+        var line = children[i];
+        if (!_filterQuery) {
+            line.classList.remove('is-filtered-out');
+        } else {
+            var text = (line.textContent || '').toLowerCase();
+            line.classList.toggle('is-filtered-out', text.indexOf(_filterQuery) === -1);
+        }
+    }
+    // 过滤后跳到底部（让用户看到最近的匹配）
+    if (_filterQuery && !_pauseScroll) {
+        body.scrollTop = body.scrollHeight;
+    }
+}
+
+// 清除搜索过滤
+function clearConsoleSearch() {
+    var inp = document.getElementById('consoleSearch');
+    var clear = document.getElementById('consoleSearchClear');
+    if (inp) inp.value = '';
+    if (clear) clear.style.display = 'none';
+    _filterQuery = '';
+    _applyFilter();
+}
+
+// 初始化工具栏（DOM 已渲染后调用）
+_setupSearchFilter();
 
 var _sendingCmd = false;
 // 命令队列：替代原 120ms 硬锁（硬锁会丢弃连发命令），改为入队 + 100ms 间隔串行 flush
@@ -114,6 +287,7 @@ function sendCommand(cmd) {
     // echo 与历史保存立即执行（即时反馈）；实际 emit 入队串行发送，避免连发丢失
     appendLine('<span class="c-cmd">$ ' + escapeHtml(cmd) + '</span>');
     saveHistory(cmd);
+    _pushCmdHistory(cmd);
     _cmdQueue.push(cmd);
     _flushCmdQueue();
 }
@@ -309,6 +483,7 @@ socket.on('console_output', function (data) {
 // 新消息提示：用户向上滚动时累计未读消息数，显示 pill
 var _newMsgCount = 0;
 var _scrollBtn = document.getElementById('scrollBottomBtn');
+var _scrollFloatBtn = document.getElementById('scrollFloatBtn');
 var _pill = document.getElementById('newMsgPill');
 var _pillCount = document.getElementById('newMsgCount');
 function _isAtBottom() {
@@ -326,8 +501,11 @@ if (body) {
                 _newMsgCount = 0;
                 if (_pill) _pill.style.display = 'none';
                 if (_scrollBtn) _scrollBtn.style.display = 'none';
-            } else if (_scrollBtn) {
-                _scrollBtn.style.display = '';
+                if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
+            } else {
+                // 用户主动向上滚动：显示工具栏按钮 + 右下角浮动「回到最新」
+                if (_scrollBtn) _scrollBtn.style.display = '';
+                if (_scrollFloatBtn) _scrollFloatBtn.style.display = '';
             }
         });
     }, { passive: true });
@@ -337,6 +515,7 @@ function scrollToBottom() {
     body.scrollTop = body.scrollHeight;
     _newMsgCount = 0;
     if (_pill) _pill.style.display = 'none';
+    if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
 }
 if (_pill) _pill.addEventListener('click', scrollToBottom);
 
@@ -395,7 +574,13 @@ if (input) {
 }
 
 function escapeHtml(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // 同时转义 & < > " ' 以兼容元素内容与属性上下文
+    return (s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 // 渲染收藏的命令为快捷发送 chips（点击即发送到控制台）
 function renderFavs() {
@@ -409,13 +594,79 @@ function renderFavs() {
                 el.innerHTML = '<span class="fav-empty">暂无收藏命令 · 在「命令参考」页点 ★ 即可收藏，这里一键发送</span>';
                 return;
             }
+            // 通过 data-cmd 属性承载命令 + 事件委托，避免 onclick 字符串拼接导致的 XSS
             el.innerHTML = cmds.map(function (c) {
-                return '<button class="fav-chip" onclick=\'sendCommand(' + JSON.stringify(c) + ')\'>' + escapeHtml(c) + '</button>';
+                return '<button type="button" class="fav-chip" data-cmd="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
             }).join('');
         })
         .catch(function () { el.innerHTML = ''; });
 }
+// 事件委托：点击 favStrip 内的 .fav-chip 时取出 data-cmd 并发送
+(function () {
+    var el = document.getElementById('favStrip');
+    if (!el) return;
+    el.addEventListener('click', function (e) {
+        var btn = e.target;
+        while (btn && btn !== el) {
+            if (btn.classList && btn.classList.contains('fav-chip')) {
+                var cmd = btn.getAttribute('data-cmd') || '';
+                if (cmd) sendCommand(cmd);
+                return;
+            }
+            btn = btn.parentNode;
+        }
+    });
+})();
 
 function clearConsole() { if (body) body.innerHTML = ''; }
+
+/* ─── 命令历史下拉（最近 10 条，选择填入输入框） ─────────────── */
+function toggleCmdHistory() {
+    var dd = document.getElementById('cmdHistoryDropdown');
+    if (!dd) return;
+    if (!dd.hidden) { _closeCmdHistory(); return; }
+    _renderCmdHistory();
+    dd.hidden = false;
+    var btn = document.getElementById('cmdHistoryBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+function _closeCmdHistory() {
+    var dd = document.getElementById('cmdHistoryDropdown');
+    var btn = document.getElementById('cmdHistoryBtn');
+    if (dd) dd.hidden = true;
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function _renderCmdHistory() {
+    var dd = document.getElementById('cmdHistoryDropdown');
+    if (!dd) return;
+    if (!_cmdHistory.length) {
+        dd.innerHTML = '<div class="cmd-history-empty">暂无历史命令</div>';
+        return;
+    }
+    // 最近 10 条，倒序展示（最新在最上）
+    var recent = _cmdHistory.slice(-10).reverse();
+    var html = '';
+    for (var i = 0; i < recent.length; i++) {
+        html += '<button type="button" class="cmd-history-item">' + escapeHtml(recent[i]) + '</button>';
+    }
+    dd.innerHTML = html;
+    var items = dd.querySelectorAll('.cmd-history-item');
+    for (var j = 0; j < items.length; j++) {
+        (function (item, cmd) {
+            item.addEventListener('click', function () {
+                if (input) { input.value = cmd; input.focus(); moveCursorEnd(input); }
+                _closeCmdHistory();
+            });
+        })(items[j], recent[j]);
+    }
+}
+// 点击外部关闭下拉
+document.addEventListener('click', function (e) {
+    var dd = document.getElementById('cmdHistoryDropdown');
+    var btn = document.getElementById('cmdHistoryBtn');
+    if (!dd || dd.hidden) return;
+    if (dd.contains(e.target) || (btn && btn.contains(e.target))) return;
+    _closeCmdHistory();
+});
 
 renderFavs();

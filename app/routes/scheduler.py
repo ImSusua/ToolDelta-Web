@@ -19,6 +19,9 @@ def scheduler_page():
 
 @bp.route("/api/scheduler/jobs", methods=["GET"])
 def api_jobs():
+    err = _admin_required()
+    if err:
+        return err
     return jsonify(scheduler_service.list_jobs())
 
 

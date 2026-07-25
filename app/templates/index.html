@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
     <h1>仪表盘</h1>
-    <button class="btn" id="mainToggleBtn" onclick="toggleTool()" aria-busy="true">检测中...</button>
+    <button type="button" class="btn" id="mainToggleBtn" onclick="toggleTool()" aria-busy="true" aria-label="启动或停止 ToolDelta">检测中...</button>
 </div>
 
 <div class="stat-grid">
@@ -37,82 +37,181 @@
     </div>
 </div>
 
-<div class="stat-grid" id="dashStats">
+<div class="stat-grid" id="dashStats" aria-busy="true">
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">⚙</div>
             <div class="stat-label">CPU 使用率</div>
         </div>
-        <div class="stat-value" id="dashCpu" aria-live="polite">0.0%</div>
+        <div class="stat-value loading-text" id="dashCpu" aria-live="polite">—</div>
+        <svg class="mini-spark" id="sparkCpu" viewBox="0 0 80 24" preserveAspectRatio="none" aria-hidden="true"><polyline class="spark-line" points="" /><circle class="spark-dot" cx="-1" cy="-1" r="1.6" /></svg>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">📊</div>
             <div class="stat-label">内存使用</div>
         </div>
-        <div class="stat-value" id="dashMem">0 MB</div>
+        <div class="stat-value loading-text" id="dashMem">—</div>
+        <svg class="mini-spark" id="sparkMem" viewBox="0 0 80 24" preserveAspectRatio="none" aria-hidden="true"><polyline class="spark-line" points="" /><circle class="spark-dot" cx="-1" cy="-1" r="1.6" /></svg>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">💿</div>
             <div class="stat-label">磁盘剩余</div>
         </div>
-        <div class="stat-value" id="dashDisk">0.0 GB</div>
+        <div class="stat-value loading-text" id="dashDisk">—</div>
+        <svg class="mini-spark" id="sparkDisk" viewBox="0 0 80 24" preserveAspectRatio="none" aria-hidden="true"><polyline class="spark-line" points="" /><circle class="spark-dot" cx="-1" cy="-1" r="1.6" /></svg>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" id="dashToolIcon" role="img" aria-label="ToolDelta 运行状态">●</div>
             <div class="stat-label">ToolDelta</div>
         </div>
-        <div class="stat-value" id="dashToolStatus" aria-live="polite">检测中...</div>
+        <div class="stat-value loading-text" id="dashToolStatus" aria-live="polite">检测中...</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">🐕</div>
             <div class="stat-label">看门狗</div>
         </div>
-        <div class="stat-value" id="dashWatchdog">关</div>
+        <div class="stat-value loading-text" id="dashWatchdog">—</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">🌐</div>
             <div class="stat-label">服务器连接</div>
         </div>
-        <div class="stat-value" id="dashConnections">0</div>
+        <div class="stat-value loading-text" id="dashConnections">—</div>
     </div>
     <div class="stat-card">
         <div class="stat-header">
             <div class="stat-icon" aria-hidden="true">📊</div>
             <div class="stat-label">定时任务</div>
         </div>
-        <div class="stat-value" id="dashSchedJobs">0</div>
+        <div class="stat-value loading-text" id="dashSchedJobs">—</div>
     </div>
 </div>
 
 <div class="card">
     <h2>快捷操作</h2>
     <div class="quick-actions">
-        <a class="btn btn-primary" href="/console">打开控制台</a>
-        <a class="btn btn-outline" href="/plugins">插件管理</a>
-        <a class="btn btn-outline" href="/market">浏览市场</a>
-        <a class="btn btn-outline" href="/backup">备份</a>
-        <a class="btn btn-outline" href="/commands">命令参考</a>
+        <a class="qa-card qa-primary" href="/console">
+            <span class="qa-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            </span>
+            <span class="qa-text">
+                <span class="qa-title">打开控制台</span>
+                <span class="qa-sub">实时输入命令与查看输出</span>
+            </span>
+            <span class="qa-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="qa-card" href="/plugins">
+            <span class="qa-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12.5l-7 7a2 2 0 0 1-2.8 0L4 14"/><path d="M4 9l5.5-5.5a2 2 0 0 1 2.8 0l5 5"/><line x1="2" y1="22" x2="22" y2="22"/></svg>
+            </span>
+            <span class="qa-text">
+                <span class="qa-title">插件管理</span>
+                <span class="qa-sub">启用 / 禁用 / 配置本地插件</span>
+            </span>
+            <span class="qa-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="qa-card" href="/market">
+            <span class="qa-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>
+            </span>
+            <span class="qa-text">
+                <span class="qa-title">浏览市场</span>
+                <span class="qa-sub">发现并安装新插件</span>
+            </span>
+            <span class="qa-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="qa-card" href="/backup">
+            <span class="qa-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+            </span>
+            <span class="qa-text">
+                <span class="qa-title">备份恢复</span>
+                <span class="qa-sub">创建快照与一键回滚</span>
+            </span>
+            <span class="qa-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="qa-card" href="/commands">
+            <span class="qa-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/></svg>
+            </span>
+            <span class="qa-text">
+                <span class="qa-title">命令参考</span>
+                <span class="qa-sub">查阅所有可用命令与触发词</span>
+            </span>
+            <span class="qa-arrow" aria-hidden="true">→</span>
+        </a>
     </div>
 </div>
 
 <div class="card">
     <h2>系统信息</h2>
     <table>
+        <caption class="sr-only">系统信息</caption>
         <tbody id="sysInfoTable">
-            <tr><td style="width:120px">Python 版本</td><td id="infoPython">-</td></tr>
-            <tr><td>操作系统</td><td id="infoPlatform">-</td></tr>
-            <tr><td>ToolDelta 目录</td><td id="infoDir" class="path-mono">-</td></tr>
-            <tr><td>ToolDelta 状态</td><td id="infoExists">-</td></tr>
+            <tr><th scope="row" style="width:120px;text-transform:none;font-size:13px;color:var(--ink);font-weight:400">Python 版本</th><td id="infoPython">-</td></tr>
+            <tr><th scope="row" style="text-transform:none;font-size:13px;color:var(--ink);font-weight:400">操作系统</th><td id="infoPlatform">-</td></tr>
+            <tr><th scope="row" style="text-transform:none;font-size:13px;color:var(--ink);font-weight:400">ToolDelta 目录</th><td id="infoDir" class="path-mono">-</td></tr>
+            <tr><th scope="row" style="text-transform:none;font-size:13px;color:var(--ink);font-weight:400">ToolDelta 状态</th><td id="infoExists">-</td></tr>
         </tbody>
     </table>
+</div>
+
+<!-- 实时性能趋势图(纯 SVG 无依赖,参考 Grafana 时序图风格) -->
+<div class="card perf-chart-card">
+    <div class="perf-chart-head">
+        <h2>性能趋势 <span class="perf-chart-sub" id="perfChartSub">最近 60 秒</span></h2>
+        <div class="perf-legend" role="list">
+            <span class="perf-legend-item" role="listitem"><span class="perf-dot perf-dot-cpu"></span>CPU</span>
+            <span class="perf-legend-item" role="listitem"><span class="perf-dot perf-dot-mem"></span>内存</span>
+        </div>
+    </div>
+    <div class="perf-chart-wrap">
+        <svg id="perfChart" class="perf-chart" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label="CPU 与内存使用率趋势图">
+            <defs>
+                <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.35"/>
+                    <stop offset="100%" stop-color="var(--primary)" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--success)" stop-opacity="0.30"/>
+                    <stop offset="100%" stop-color="var(--success)" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <!-- 网格 -->
+            <g class="perf-grid" stroke="var(--hairline)" stroke-width="1" stroke-dasharray="2 4" opacity="0.6">
+                <line x1="0" y1="40" x2="600" y2="40"/>
+                <line x1="0" y1="80" x2="600" y2="80"/>
+                <line x1="0" y1="120" x2="600" y2="120"/>
+            </g>
+            <g class="perf-axis-label" fill="var(--ink-tertiary)" font-size="9" font-family="monospace">
+                <text x="4" y="12">100%</text>
+                <text x="4" y="52">75%</text>
+                <text x="4" y="92">50%</text>
+                <text x="4" y="132">25%</text>
+            </g>
+            <!-- CPU 区域 + 折线 -->
+            <path id="cpuArea" class="perf-area" fill="url(#cpuGrad)" d=""/>
+            <path id="cpuLine" class="perf-line perf-line-cpu" fill="none" stroke="var(--primary)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" d=""/>
+            <!-- 内存区域 + 折线 -->
+            <path id="memArea" class="perf-area" fill="url(#memGrad)" d=""/>
+            <path id="memLine" class="perf-line perf-line-mem" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" d=""/>
+            <!-- 最新点高亮 -->
+            <circle id="cpuDot" class="perf-dot-latest" r="2.6" fill="var(--primary)" cx="0" cy="160"/>
+            <circle id="memDot" class="perf-dot-latest" r="2.6" fill="var(--success)" cx="0" cy="160"/>
+            <!-- hover 垂直指示线 -->
+            <line class="hover-line" id="perfHoverLine" x1="0" y1="0" x2="0" y2="160" stroke="var(--ink-subtle)" stroke-width="1" stroke-dasharray="3 3" opacity="0" />
+        </svg>
+        <div class="perf-empty" id="perfEmpty" role="status" aria-live="polite"><span class="perf-empty-text">收集数据中…</span></div>
+        <div class="perf-tooltip" id="perfTooltip" role="status" aria-live="off"></div>
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/dashboard.js" defer></script>
 {% endblock %}

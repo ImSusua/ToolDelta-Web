@@ -4,8 +4,8 @@
 <div class="page-header">
     <h1>控制台</h1>
     <div>
-        <button class="btn btn-outline" id="consoleToggleBtn" onclick="toggleTool()" aria-label="启动或停止 ToolDelta">检测中...</button>
-        <button class="btn btn-outline" onclick="clearConsole()" aria-label="清空控制台输出">清屏</button>
+        <button type="button" class="btn btn-outline" id="consoleToggleBtn" onclick="toggleTool()" aria-label="启动或停止 ToolDelta">检测中...</button>
+        <button type="button" class="btn btn-outline" onclick="clearConsole()" aria-label="清空控制台输出">清屏</button>
     </div>
 </div>
 
@@ -13,15 +13,30 @@
     <div class="console-bar">
         <span id="consoleStatus" class="status-conn connecting" role="status" aria-live="polite">连接中…</span>
         <span id="processStatus" class="process-status stopped" role="status" aria-live="polite" title="ToolDelta 进程状态">进程未启动</span>
-        <button class="btn btn-sm btn-outline" id="copyAllBtn" onclick="copyAllConsole()" aria-label="复制全部输出">复制</button>
-        <button class="btn btn-sm btn-outline" id="scrollBottomBtn" onclick="scrollToBottom()" style="display:none" aria-label="滚动到最新">↓ 最新</button>
-        <button id="newMsgPill" class="new-msg-pill" role="button" tabindex="0" aria-label="跳到最新" style="display:none"><span id="newMsgCount">0</span> 条新</button>
+        <div class="console-toolbar" role="toolbar" aria-label="控制台工具">
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="pauseScrollBtn" onclick="togglePauseScroll()" aria-pressed="false" aria-label="暂停自动滚动" title="暂停自动滚动（新消息不自动滚动到底部）"><span class="ico" aria-hidden="true">⏸</span><span class="lbl">暂停</span></button>
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="timestampBtn" onclick="toggleTimestamps()" aria-pressed="false" aria-label="显示时间戳" title="显示 / 隐藏每行时间戳"><span class="ico" aria-hidden="true">🕒</span><span class="lbl">时间</span></button>
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="lineNumberBtn" onclick="toggleLineNumbers()" aria-pressed="false" aria-label="显示行号" title="显示 / 隐藏行号"><span class="ico" aria-hidden="true">#</span><span class="lbl">行号</span></button>
+            <div class="console-search">
+                <input type="search" id="consoleSearch" placeholder="过滤输出..." autocomplete="off" inputmode="search" enterkeyhint="search" aria-label="过滤控制台输出">
+                <button type="button" class="console-search-clear" id="consoleSearchClear" onclick="clearConsoleSearch()" aria-label="清除过滤" style="display:none">×</button>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="copyAllBtn" onclick="copyAllConsole()" aria-label="复制全部输出" title="复制全部输出"><span class="ico" aria-hidden="true">📋</span></button>
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="scrollBottomBtn" onclick="scrollToBottom()" style="display:none" aria-label="滚动到最新" title="滚动到最新">↓</button>
+        </div>
+        <button type="button" id="newMsgPill" class="new-msg-pill" role="button" tabindex="0" aria-label="跳到最新" style="display:none"><span id="newMsgCount">0</span> 条新</button>
     </div>
     <div class="fav-strip" id="favStrip" aria-label="常用命令"></div>
     <div class="console-body" id="consoleBody" role="log" aria-label="控制台输出" tabindex="0"></div>
+    <button id="scrollFloatBtn" class="scroll-float-btn" type="button" onclick="scrollToBottom()" aria-label="回到最新" title="回到最新" style="display:none"><span aria-hidden="true">↓</span> 回到最新</button>
     <div class="console-foot">
+        <label for="consoleInput" class="sr-only">命令输入</label>
         <input id="consoleInput" placeholder="输入命令...（↑/↓ 翻历史，Tab 补全）" autocomplete="off" inputmode="text" enterkeyhint="send" aria-label="命令输入">
-        <button class="console-send-btn" id="console-send-btn" onclick="sendConsoleInput()" aria-label="发送命令">发送</button>
+        <div class="cmd-history-wrap">
+            <button type="button" class="cmd-history-btn" id="cmdHistoryBtn" onclick="toggleCmdHistory()" aria-label="历史命令" title="最近命令" aria-haspopup="listbox" aria-expanded="false">历史 ▾</button>
+            <div class="cmd-history-dropdown" id="cmdHistoryDropdown" role="listbox" aria-label="最近命令" hidden></div>
+        </div>
+        <button type="button" class="console-send-btn" id="console-send-btn" onclick="sendConsoleInput()" aria-label="发送命令">发送</button>
     </div>
 </div>
 
@@ -139,6 +154,127 @@
 }
 .console-send-btn:hover { background: var(--primary-hover); }
 .console-send-btn:active { background: var(--primary); }
+
+/* ─── 控制台工具栏（参考 Pterodactyl / Grafana console toolbar） ─── */
+.console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.console-tool-btn {
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.console-tool-btn .ico { font-size: 13px; line-height: 1; }
+/* 隐藏文字标签：极小屏只显示图标，节省横向空间 */
+@media (max-width: 560px) {
+  .console-tool-btn .lbl { display: none; }
+}
+/* 激活态：按钮高亮，提示当前已开启 */
+.console-tool-btn[aria-pressed="true"] {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.console-tool-btn[aria-pressed="true"]:hover {
+  background: var(--primary-hover);
+}
+/* 暂停滚动时按钮红色高亮，强化状态反馈 */
+#pauseScrollBtn[aria-pressed="true"] {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #000;
+}
+#pauseScrollBtn[aria-pressed="true"]:hover { opacity: 0.9; }
+
+/* ─── 控制台搜索过滤（参考 VS Code terminal filter） ─── */
+.console-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 160px;
+  flex: 1 1 160px;
+  max-width: 240px;
+}
+.console-search::before {
+  content: '🔍';
+  position: absolute;
+  left: 8px;
+  font-size: 11px;
+  pointer-events: none;
+  opacity: 0.7;
+}
+.console-search input {
+  width: 100%;
+  padding: 4px 22px 4px 26px;
+  font-size: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.console-search input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(94, 106, 210, 0.15);
+}
+.console-search input::placeholder { color: var(--ink-tertiary); }
+.console-search-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px; height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--ink-subtle);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.console-search-clear:hover { background: var(--surface-3); color: var(--ink); }
+
+/* 时间戳显示（每行左侧灰字时间） */
+.console-body > div .c-ts {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--ink-tertiary);
+  font-size: 11px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  opacity: 0.7;
+  user-select: text;
+}
+/* 时间戳默认隐藏，开启时显示 */
+.console-body:not(.show-ts) > div .c-ts { display: none; }
+.console-body.show-ts > div .c-ts { display: inline-block; }
+
+/* 过滤隐藏行 */
+.console-body > div.is-filtered-out {
+  display: none;
+}
+/* 高亮匹配文本（搜索过滤命中） */
+.console-body mark {
+  background: rgba(245, 166, 35, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+/* 暂停滚动状态：边框轻微高亮提示 */
+.console-bar.is-paused {
+  box-shadow: inset 0 -1px 0 var(--warning);
+}
 </style>
 {% endblock %}
 
@@ -146,22 +282,35 @@
 <script src="/static/js/console.js" defer></script>
 <script>
   // 命令面板注册：控制台专属操作（参考 Linear page-scoped actions）
-  if (window.TD_PALETTE) {
-    TD_PALETTE.register({
-        id: 'pg_console_clear', label: '清空控制台', group: '本页操作', ico: '🧹', hint: 'console',
-        keywords: '清空 clear console 屏',
-        run: function () { if (typeof clearConsole === 'function') clearConsole(); }
-    });
-    TD_PALETTE.register({
-        id: 'pg_console_scroll', label: '滚动到最新', group: '本页操作', ico: '↓', hint: 'console',
-        keywords: '滚动 最新 scroll bottom down',
-        run: function () { if (typeof scrollToBottom === 'function') scrollToBottom(); }
-    });
-    TD_PALETTE.register({
-        id: 'pg_console_copy', label: '复制全部输出', group: '本页操作', ico: '📋', hint: 'console',
-        keywords: '复制 copy all console',
-        run: function () { if (typeof copyAllConsole === 'function') copyAllConsole(); }
-    });
-  }
+  // 使用 DOMContentLoaded 确保 palette.js (defer) 已加载并定义 window.TD_PALETTE
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.TD_PALETTE) {
+      TD_PALETTE.register({
+          id: 'pg_console_clear', label: '清空控制台', group: '本页操作', ico: '🧹', hint: 'console',
+          keywords: '清空 clear console 屏 暂停 时间 过滤',
+          run: function () { if (typeof clearConsole === 'function') clearConsole(); }
+      });
+      TD_PALETTE.register({
+          id: 'pg_console_scroll', label: '滚动到最新', group: '本页操作', ico: '↓', hint: 'console',
+          keywords: '滚动 最新 scroll bottom down',
+          run: function () { if (typeof scrollToBottom === 'function') scrollToBottom(); }
+      });
+      TD_PALETTE.register({
+          id: 'pg_console_copy', label: '复制全部输出', group: '本页操作', ico: '📋', hint: 'console',
+          keywords: '复制 copy all console',
+          run: function () { if (typeof copyAllConsole === 'function') copyAllConsole(); }
+      });
+      TD_PALETTE.register({
+          id: 'pg_console_pause', label: '暂停/继续自动滚动', group: '本页操作', ico: '⏸', hint: 'console',
+          keywords: '暂停 继续 pause scroll auto',
+          run: function () { if (typeof togglePauseScroll === 'function') togglePauseScroll(); }
+      });
+      TD_PALETTE.register({
+          id: 'pg_console_ts', label: '切换时间戳显示', group: '本页操作', ico: '🕒', hint: 'console',
+          keywords: '时间戳 timestamp toggle',
+          run: function () { if (typeof toggleTimestamps === 'function') toggleTimestamps(); }
+      });
+    }
+  });
 </script>
 {% endblock %}

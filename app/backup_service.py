@@ -4,6 +4,7 @@ import shutil
 import zipfile
 from datetime import datetime
 from flask import current_app
+from app.log_service import log_service
 
 
 def _parse_time(s):
@@ -142,11 +143,13 @@ class BackupService:
     def restore_backup(self, zip_name):
         backup_dir = self.get_backup_dir()
         # 先停止 ToolDelta 进程，避免运行期覆盖文件导致主程序损坏（P1-3）
+        # stop 失败不能继续覆盖文件，否则可能损坏运行中的主程序（P1-5）
         try:
             from app.tooldelta_manager import tooldelta_manager
             tooldelta_manager.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            log_service.error("停止 ToolDelta 失败，中止恢复: " + str(e), "BACKUP")
+            return False, "停止运行中的 ToolDelta 失败，请先手动停止后重试"
         td_dir = current_app.config["TOOLDELTA_DIR"]
         zip_path = os.path.join(backup_dir, zip_name)
         if not os.path.isfile(zip_path):
@@ -196,12 +199,25 @@ class BackupService:
             return True, "恢复成功"
         except Exception as e:
             # 恢复失败，用快照回滚到恢复前状态
+            # 回滚本身也可能失败：必须明确告知调用方数据可能损坏，不能宣称"已回滚"（P1-5）
+            rollback_ok = False
+            rollback_err = None
             try:
+                abs_td_dir = os.path.abspath(td_dir)
                 with zipfile.ZipFile(snapshot_path, "r") as z:
-                    z.extractall(td_dir)
-            except Exception:
-                pass
-            return False, f"恢复失败，已回滚至恢复前状态: {e}"
+                    # 回滚解压同样需要 zip slip 防护，避免快照被篡改后越权写文件
+                    for member in z.namelist():
+                        member_path = os.path.normpath(os.path.join(abs_td_dir, member))
+                        if not member_path.startswith(abs_td_dir + os.sep) and member_path != abs_td_dir:
+                            raise ValueError("zip slip detected: " + member)
+                    z.extractall(abs_td_dir)
+                rollback_ok = True
+            except Exception as rollback_ex:
+                rollback_err = rollback_ex
+                log_service.error("恢复回滚失败: " + str(rollback_ex), "BACKUP")
+            if rollback_ok:
+                return False, f"恢复失败，已回滚至恢复前状态: {e}"
+            return False, "恢复失败且回滚也失败，数据可能损坏，请检查文件系统（原始错误: " + str(e) + "）"
         finally:
             if os.path.isdir(temp):
                 shutil.rmtree(temp)
@@ -218,11 +234,13 @@ class BackupService:
         """
         td_dir = current_app.config["TOOLDELTA_DIR"]
         # 先停止 ToolDelta 进程，避免运行期删文件破坏数据（P1-3）
+        # stop 失败不能继续清空目录，否则可能损坏运行中的主程序（P1-5）
         try:
             from app.tooldelta_manager import tooldelta_manager
             tooldelta_manager.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            log_service.error("停止 ToolDelta 失败，中止重置: " + str(e), "BACKUP")
+            return False, "停止运行中的 ToolDelta 失败，请先手动停止后重试"
         zip_path = current_app.config.get("TOOLDELTA_SOURCE_ZIP")
         if not zip_path or not os.path.isfile(zip_path):
             return False, "出厂程序包不存在，无法进行重置"

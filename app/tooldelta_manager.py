@@ -1,6 +1,8 @@
 import os
 import sys
 import re
+import atexit
+import signal
 # Windows 没有 pty 模块：pty 仅用于类 Unix 平台给子进程套伪终端以输出 ANSI 真彩，
 # 故仅在非 Windows 平台导入；Windows 走 PIPE 回退（彩色由主程序自身兜底）。
 # 注意：import 必须条件化，否则 Windows 上模块加载即因 ImportError 整体崩溃、无法启动。
@@ -273,9 +275,38 @@ class ToolDeltaManager:
         self.pty_master = None
         self._encoding = "utf-8"
         self._enc_detected = False
+        # 优雅退出保护标志：signal handler 触发后置 True，避免 SIGTERM/SIGINT
+        # 重复递交或与 atexit 叠加导致 stop() 被多次调用。
+        self._shutting_down = False
 
     def init_app(self, app):
         self.app = app
+        # 注册优雅退出钩子：Flask 主进程被 kill 或正常退出时，确保 ToolDelta
+        # 子进程被 stop()（避免成为孤儿进程），并关闭 pty_master 文件描述符
+        # （避免 fd 永久泄漏）。init_app 由 create_app 在主线程调用，故此处的
+        # signal.signal 注册满足“仅主线程可注册”的约束。
+        atexit.register(self.stop)
+        # 用 try/except 包裹 signal 注册：部分环境（如 Windows 对 SIGTERM 的
+        # 限制、或非主线程调用）可能抛 ValueError/AttributeError/OSError。
+        try:
+            signal.signal(signal.SIGTERM, self._signal_shutdown)
+        except (ValueError, AttributeError, OSError):
+            pass
+        try:
+            signal.signal(signal.SIGINT, self._signal_shutdown)
+        except (ValueError, AttributeError, OSError):
+            pass
+
+    def _signal_shutdown(self, *_args):
+        """SIGTERM/SIGINT 信号处理：触发优雅退出。
+        用 _shutting_down 标志保护，避免信号重复递交导致多次 stop()。"""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     def _is_valid_main(self, main_py):
         """检查 main.py 是否真正可用：存在、非空、且语法可编译（仅编译不执行，避免副作用）。
@@ -640,7 +671,10 @@ class ToolDeltaManager:
         if len(self.output_buffer) > self.MAX_BUFFER:
             self.output_buffer = self.output_buffer[-self.MAX_BUFFER:]
             self.output_raw_buffer = self.output_raw_buffer[-self.MAX_BUFFER:]
-        log_service.info("[ToolDelta] " + cleaned)
+        # 控制台每行不再写 INFO 日志：避免日志膨胀 + 敏感信息泄露（P1-5）
+        # output_buffer 已缓存最近 MAX_BUFFER 行供 /api/tool/output 查询，
+        # 这里降级为 DEBUG 级别，便于按需排查但不污染默认日志视图。
+        log_service.debug("[ToolDelta] " + cleaned)
         self._broadcast("output", line)
 
     def get_status(self):
@@ -674,7 +708,8 @@ class ToolDeltaManager:
         for cb in listeners:
             try:
                 cb(type_, data)
-            except Exception:
-                pass
+            except Exception as e:
+                # 监听器异常不能静默吞掉，否则下游故障无从排查（P1-5）
+                log_service.warn("output listener 抛出异常: " + str(e), "TOOLDELTA")
 
 tooldelta_manager = ToolDeltaManager()

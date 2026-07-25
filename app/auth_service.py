@@ -58,9 +58,11 @@ def validate_username(username):
     return True, ""
 
 def validate_password(password):
-    """校验密码基本格式（长度上限），弱密码仅返回警告不阻止创建。"""
-    if not isinstance(password, str) or len(password) < 1 or len(password) > 64:
-        return False, "密码长度需1-64位"
+    """校验密码格式：长度 8-64，且至少同时包含字母和数字。"""
+    if not isinstance(password, str) or len(password) < 8 or len(password) > 64:
+        return False, "密码长度需8-64位"
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        return False, "密码需同时包含字母和数字"
     return True, ""
 
 def check_password_strength(password):
@@ -118,8 +120,17 @@ def verify_password(password):
     return None
 
 def setup_user(username, password, role=10):
+    valid, msg = validate_username(username)
+    if not valid:
+        return False, msg
+    valid, msg = validate_password(password)
+    if not valid:
+        return False, msg
     with _lock:
         users = _read_locked()
+        # 检查用户是否已存在，避免重复创建或覆盖现有管理员
+        if any(u.get("username") == username for u in users):
+            return False, "用户名已存在"
         users.append({
             "username": username,
             "password_hash": generate_password_hash(password),
@@ -128,8 +139,15 @@ def setup_user(username, password, role=10):
             "login_at": ""
         })
         _write_locked(users)
+    return True, ""
 
 def create_user(username, password, role=1):
+    valid, msg = validate_username(username)
+    if not valid:
+        return False, msg
+    valid, msg = validate_password(password)
+    if not valid:
+        return False, msg
     with _lock:
         users = _read_locked()
         if any(u.get("username") == username for u in users):
@@ -152,6 +170,9 @@ def delete_user(username):
     return True
 
 def change_password(username, old_password, new_password):
+    valid, msg = validate_password(new_password)
+    if not valid:
+        return False, msg
     with _lock:
         users = _read_locked()
         target = next((u for u in users if u.get("username") == username), None)
@@ -165,6 +186,9 @@ def change_password(username, old_password, new_password):
     return True, ""
 
 def admin_reset_password(username, new_password):
+    valid, msg = validate_password(new_password)
+    if not valid:
+        return False, msg
     with _lock:
         users = _read_locked()
         found = False
@@ -174,7 +198,7 @@ def admin_reset_password(username, new_password):
                 found = True
         if found:
             _write_locked(users)
-        return found
+        return found, "" if found else "用户不存在"
 
 def reset_panel():
     if USER_FILE and os.path.isfile(USER_FILE):

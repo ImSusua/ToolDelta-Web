@@ -18,6 +18,9 @@ def watchdog_page():
 
 @bp.route("/api/watchdog/config", methods=["GET"])
 def watchdog_config():
+    err = _admin_required()
+    if err:
+        return err
     return jsonify(watchdog_service.get_config())
 
 
@@ -33,6 +36,9 @@ def watchdog_set():
 
 @bp.route("/api/watchdog/status", methods=["GET"])
 def watchdog_status():
+    err = _admin_required()
+    if err:
+        return err
     return jsonify(watchdog_service.get_runtime())
 
 

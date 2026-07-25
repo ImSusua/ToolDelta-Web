@@ -939,12 +939,359 @@ th[role="button"]:focus-visible {
 /* ─── Quick actions ─── */
 
 .quick-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
 }
-.quick-actions .btn { min-width: 120px; justify-content: center; }
+/* 快捷操作卡片：参考 Linear app picker + Vercel dashboard card
+   - 渐变左边框 / 图标块 / 标题+副标题 / 右侧箭头
+   - hover 微动效：上浮 + 边框高亮 + 箭头位移 */
+.qa-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  text-decoration: none;
+  color: var(--ink);
+  transition: transform var(--duration-base), border-color var(--duration-base),
+              background var(--duration-base), box-shadow var(--duration-base);
+  overflow: hidden;
+  /* 左侧渐变条：通过 ::before 在卡片左缘绘制 3px 宽渐变 */
+}
+.qa-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--primary), var(--primary-hover));
+  opacity: 0.7;
+  transition: opacity var(--duration-base);
+}
+.qa-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  background: var(--surface-2);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+.qa-card:hover::before { opacity: 1; }
+.qa-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* 主操作卡片：渐变背景突出主入口 */
+.qa-card.qa-primary {
+  background: linear-gradient(135deg, rgba(94,106,210,0.18), rgba(130,143,255,0.06));
+  border-color: rgba(94,106,210,0.4);
+}
+.qa-card.qa-primary::before {
+  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
+  opacity: 1;
+}
+.qa-card.qa-primary:hover {
+  background: linear-gradient(135deg, rgba(94,106,210,0.28), rgba(130,143,255,0.12));
+  border-color: var(--primary-hover);
+}
+/* 图标块：圆角方块 + 渐变背景，参考 Linear icon tiles */
+.qa-icon {
+  flex: none;
+  width: 40px; height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  color: var(--primary-hover);
+  transition: background var(--duration-base), color var(--duration-base);
+}
+.qa-icon svg {
+  width: 20px; height: 20px;
+  display: block;
+}
+.qa-card:hover .qa-icon {
+  background: rgba(94,106,210,0.15);
+  color: var(--primary-hover);
+  border-color: var(--primary);
+}
+.qa-card.qa-primary .qa-icon {
+  background: rgba(94,106,210,0.25);
+  color: #fff;
+  border-color: rgba(255,255,255,0.18);
+}
+/* 文本区：标题 + 副标题 */
+.qa-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.qa-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qa-sub {
+  font-size: 12px;
+  color: var(--ink-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 右侧箭头：hover 时右移，强化「可点击进入」暗示 */
+.qa-arrow {
+  flex: none;
+  color: var(--ink-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform var(--duration-base), color var(--duration-base);
+}
+.qa-card:hover .qa-arrow {
+  transform: translateX(4px);
+  color: var(--primary-hover);
+}
+/* 移动端：副标题省略号 + 卡片紧凑 */
+@media (max-width: 768px) {
+  .qa-card { padding: 12px 14px; gap: 10px; }
+  .qa-icon { width: 36px; height: 36px; }
+  .qa-icon svg { width: 18px; height: 18px; }
+  .qa-title { font-size: 13px; }
+  .qa-sub { font-size: 11px; }
+}
+/* 尊重减少动态效果：禁用 hover 上浮与箭头位移 */
+@media (prefers-reduced-motion: reduce) {
+  .qa-card, .qa-card::before, .qa-icon, .qa-arrow { transition: none; }
+  .qa-card:hover { transform: none; }
+  .qa-card:hover .qa-arrow { transform: none; }
+}
+/* 触屏设备：禁用 hover 上浮（避免残留态） */
+@media (hover: none) {
+  .qa-card:hover { transform: none; box-shadow: none; }
+}
+
+/* ─── 性能趋势图(参考 Grafana 时序图) ─── */
+
+.perf-chart-card { padding: 20px 24px; }
+.perf-chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.perf-chart-head h2 { margin: 0; }
+.perf-chart-sub {
+  font-size: 11px;
+  color: var(--ink-subtle);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.perf-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.perf-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.perf-dot-cpu { background: var(--primary); box-shadow: 0 0 6px rgba(94,106,210,0.4); }
+.perf-dot-mem { background: var(--success); box-shadow: 0 0 6px rgba(39,166,68,0.4); }
+
+.perf-chart-wrap {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  padding: 8px;
+  overflow: hidden;
+}
+.perf-chart {
+  display: block;
+  width: 100%;
+  height: 160px;
+  overflow: visible;
+}
+.perf-line {
+  transition: d 0.2s ease-out;
+  vector-effect: non-scaling-stroke;
+}
+.perf-area { transition: d 0.2s ease-out; }
+.perf-dot-latest {
+  filter: drop-shadow(0 0 3px currentColor);
+  transition: cx 0.2s ease-out, cy 0.2s ease-out;
+}
+.perf-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-subtle);
+  font-size: 12px;
+  pointer-events: none;
+  gap: 8px;
+  flex-direction: column;
+}
+/* 骨架占位：等待数据时显示一条 shimmer 折线，避免空白 */
+.perf-empty::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      rgba(94, 106, 210, 0.08) 30%,
+      rgba(94, 106, 210, 0.18) 50%,
+      rgba(94, 106, 210, 0.08) 70%,
+      transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--r-sm);
+  pointer-events: none;
+}
+.perf-empty-text {
+  position: relative;
+  background: var(--surface-1);
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--hairline);
+  z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .perf-empty::before { animation: none; opacity: 0.4; }
+}
+.perf-axis-label text { user-select: none; }
+
+/* 浅色主题下,图表卡片背景更柔和 */
+[data-theme="light"] .perf-chart-wrap { background: var(--surface-2); }
+[data-theme="light"] .perf-grid { opacity: 0.5; }
+
+/* 尊重减少动态效果:关闭折线/区域过渡动画 */
+@media (prefers-reduced-motion: reduce) {
+  .perf-line, .perf-area, .perf-dot-latest { transition: none; }
+}
+
+/* ─── stat-card 迷你 sparkline（CPU/内存/磁盘趋势，无依赖纯 SVG）─── */
+.mini-spark {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin-top: 8px;
+  overflow: visible;
+  opacity: 0.9;
+}
+.mini-spark .spark-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition: points 0.2s ease-out;
+}
+.mini-spark .spark-dot {
+  filter: drop-shadow(0 0 2px currentColor);
+  transition: cx 0.2s ease-out, cy 0.2s ease-out;
+}
+/* CPU 默认主色；内存 success 色，磁盘 warning 色，便于视觉区分 */
+#sparkCpu .spark-dot { fill: var(--primary); }
+#sparkMem .spark-line { stroke: var(--success); }
+#sparkMem .spark-dot { fill: var(--success); }
+#sparkDisk .spark-line { stroke: var(--warning); }
+#sparkDisk .spark-dot { fill: var(--warning); }
+/* 移动端：sparkline 缩小，避免 stat-card 拥挤 */
+@media (max-width: 600px) {
+  .mini-spark { height: 18px; opacity: 0.75; }
+}
+/* 超窄屏：隐藏 sparkline，仅保留数值 */
+@media (max-width: 400px) {
+  .mini-spark { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mini-spark .spark-line, .mini-spark .spark-dot { transition: none; }
+}
+
+/* ─── perf-chart hover tooltip（参考 Linear/Vercel 数据点悬停）─── */
+.perf-chart-wrap .hover-line {
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.perf-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--ink);
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 0);
+  transition: opacity 0.1s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  z-index: 5;
+  top: 8px;
+  left: 0;
+}
+.perf-tooltip.is-visible { opacity: 1; }
+.perf-tooltip .pt-time {
+  color: var(--ink-subtle);
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+.perf-tooltip .pt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-tooltip .pt-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+.perf-tooltip .pt-cpu { background: var(--primary); }
+.perf-tooltip .pt-mem { background: var(--success); }
+/* 浅色主题下 tooltip 阴影更柔和 */
+[data-theme="light"] .perf-tooltip {
+  background: var(--surface-1);
+  box-shadow: 0 4px 12px rgba(20,30,60,0.15);
+}
+@media (prefers-reduced-motion: reduce) {
+  .perf-chart-wrap .hover-line, .perf-tooltip { transition: none; }
+}
+
+/* ─── stat-value 数值变化脉冲（短暂变绿后回退，用于感知数据更新）─── */
+.stat-value.is-pulse {
+  animation: statPulse 0.6s ease-out;
+}
+@keyframes statPulse {
+  0%   { color: var(--ink); }
+  25%  { color: var(--success); }
+  100% { color: var(--ink); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat-value.is-pulse { animation: none; }
+}
 
 /* ─── Dividers ─── */
 
@@ -2940,4 +3287,443 @@ a.btn:hover { transform: translateY(-1px); }
   border-bottom: 1px solid var(--hairline);
 }
 [data-theme="light"] .notify-item:hover { background: var(--surface-2); }
+
+/* ════════════════════════════════════════════════════════════════
+   全局 UX 优化 v2（参考 Linear / Vercel / GitHub Primer）
+   — skeleton 骨架屏 / 通用空状态 / toast 动画 / 按钮成功态
+   仅追加新规则，不修改既有样式
+   ════════════════════════════════════════════════════════════════ */
+
+/* ─── 1. 全局 skeleton 骨架屏（surface-2 → surface-3 shimmer 渐变） ─── */
+/* 通用骨架卡片：列表 / 卡片加载态。覆盖早期 .skeleton-card 的渐变配色。 */
+.skeleton-card {
+  background: linear-gradient(90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+}
+/* 单行骨架：用于表格行 / 列表项加载。高度可由调用方覆盖。 */
+.skeleton-line {
+  background: linear-gradient(90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--r-sm);
+  height: 14px;
+  margin-bottom: 8px;
+  color: transparent !important;
+}
+/* 圆形头像骨架：用于头像 / 图标位加载 */
+.skeleton-avatar {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+/* 减少动态效果偏好：禁用 shimmer，保留静态背景占位 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-card,
+  .skeleton-line,
+  .skeleton-avatar { animation: none; }
+}
+
+/* ─── 2. 通用空状态（图标 + 标题 + 副标题 + 可选操作按钮） ─── */
+/* 与既有 .empty-state / .empty-title / .empty-hint 共存；
+   新增 .empty-state-* 子类用于结构化（SVG 图标）用法。 */
+.empty-state-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  color: var(--ink-subtle);
+  opacity: 0.55;
+}
+.empty-state-icon svg {
+  width: 36px;
+  height: 36px;
+  display: block;
+}
+.empty-state-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+.empty-state-sub {
+  font-size: 13px;
+  color: var(--ink-subtle);
+  line-height: 1.55;
+  margin: 0 auto 16px;
+  max-width: 320px;
+}
+.empty-state-action { margin-top: 4px; }
+/* 浅色主题适配：图标颜色加深、副标题色调更柔和 */
+[data-theme="light"] .empty-state-icon {
+  color: var(--ink-tertiary);
+  opacity: 0.75;
+  background: var(--surface-2);
+  border-radius: 50%;
+}
+[data-theme="light"] .empty-state-sub { color: var(--ink-tertiary); }
+
+/* ─── 3. Toast 进入 / 退出动画增强（slideIn + fadeIn） ─── */
+/* 与既有 toastIn 共存；新动画叠加 X 位移 + Y 微移 + opacity，更顺滑。 */
+@keyframes tdToastSlideIn {
+  from { transform: translateX(110%) translateY(-4px); opacity: 0; }
+  to   { transform: translateX(0)    translateY(0);    opacity: 1; }
+}
+@keyframes tdToastFadeOut {
+  from { transform: translateX(0);    opacity: 1; }
+  to   { transform: translateX(110%); opacity: 0; }
+}
+.toast { animation: tdToastSlideIn .28s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
+.toast.toast-out { animation: tdToastFadeOut .22s ease forwards; }
+/* error 视觉强化（实际置顶由 JS 优先级队列完成） */
+.toast.error { box-shadow: 0 6px 18px rgba(229, 72, 77, 0.18); }
+
+/* ─── 4. 按钮 loading 状态增强（更明显视觉反馈） ─── */
+.btn-loading {
+  opacity: 0.75;
+  cursor: progress;
+  position: relative;
+}
+/* 叠加 shimmer 高光层，与 ::before spinner 同时存在 */
+.btn-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-loading::after { animation: none; }
+}
+
+/* ─── 5. 按钮成功态：操作成功后短暂显示 ✓（500ms） ─── */
+.btn-success-state {
+  background: var(--success) !important;
+  color: #fff !important;
+  border-color: var(--success) !important;
+  cursor: default;
+  animation: tdBtnSuccessPop .3s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+/* 成功态下隐藏 loading spinner / shimmer 层 */
+.btn-success-state::before,
+.btn-success-state::after { display: none !important; }
+.btn-success-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+.btn-success-check svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+@keyframes tdBtnSuccessPop {
+  0%   { transform: scale(0.92); }
+  60%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-success-state { animation: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   控制台输出渲染增强（参考 Pterodactyl game panel / Grafana log panel）
+   - 行号栏（IDE 风格，默认隐藏，工具栏「# 行号」切换）
+   - 日志级别着色（INFO/WARN/ERROR/DEBUG）
+   - 浮动「回到最新」按钮（用户上滚时出现）
+   - 命令历史下拉
+   ════════════════════════════════════════════════════════════════ */
+
+/* 让浮动按钮以 .console-wrap 为定位上下文 */
+.console-wrap { position: relative; }
+
+/* ─── 行号栏（CSS counter 实现，行增减自动重编号） ─── */
+.console-body.show-lines {
+  counter-reset: line;
+  padding-left: 52px;            /* 让出左侧 gutter 空间 */
+}
+.console-body.show-lines > div {
+  counter-increment: line;
+  position: relative;
+}
+.console-body.show-lines > div::before {
+  content: counter(line);
+  position: absolute;
+  left: -38px;                   /* 偏移到 gutter 区 */
+  width: 32px;
+  text-align: right;
+  color: var(--ink-tertiary);
+  font-size: 11px;
+  opacity: 0.55;
+  user-select: none;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+}
+/* 极小屏缩窄 gutter，避免占太多横向空间 */
+@media (max-width: 400px) {
+  .console-body.show-lines { padding-left: 42px; }
+  .console-body.show-lines > div::before { left: -30px; width: 24px; }
+}
+
+/* ─── 日志级别着色（仅外层 div，内层 ANSI span 自带颜色不受影响） ─── */
+.console-body > div.log-info    { color: var(--console-fg); }   /* 默认色 */
+.console-body > div.log-warn    { color: var(--warning); }      /* 黄 */
+.console-body > div.log-error   { color: var(--danger); }       /* 红 */
+.console-body > div.log-debug   { color: var(--ink-subtle); }   /* 灰 */
+/* ERROR 行加左侧色条 + 微弱底色，强化可识别性（不覆盖 ANSI 内联色） */
+.console-body > div.log-error {
+  box-shadow: inset 3px 0 0 var(--danger);
+  background: rgba(229, 72, 77, 0.08);
+}
+.console-body > div.log-warn {
+  box-shadow: inset 3px 0 0 var(--warning);
+  background: rgba(245, 166, 35, 0.06);
+}
+
+/* ─── 浮动「回到最新」按钮（console-body 右下角 overlay） ─── */
+.scroll-float-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 56px;                  /* 略高于 console-foot */
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #fff;
+  background: var(--primary);
+  border: 1px solid var(--primary-hover);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  transition: background .15s var(--ease), transform .15s var(--ease), opacity .15s;
+}
+.scroll-float-btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
+.scroll-float-btn:active { transform: translateY(0); }
+
+/* ─── 命令历史下拉（输入框右侧「历史 ▾」） ─── */
+.cmd-history-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.cmd-history-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--ink-subtle);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s var(--ease), color .15s var(--ease);
+}
+.cmd-history-btn:hover { border-color: var(--primary); color: var(--ink); }
+.cmd-history-btn[aria-expanded="true"] {
+  border-color: var(--primary);
+  color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(94, 106, 210, 0.18);
+}
+.cmd-history-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);      /* 向上展开 */
+  right: 0;
+  min-width: 220px;
+  max-width: 360px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+.cmd-history-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  color: var(--console-fg);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background .12s var(--ease);
+}
+.cmd-history-item:hover { background: rgba(94, 106, 210, 0.18); color: var(--ink); }
+.cmd-history-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--ink-tertiary);
+  text-align: center;
+}
+/* 浅色主题适配：下拉浮层与历史项 */
+[data-theme="light"] .cmd-history-btn {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+  color: var(--ink-subtle);
+}
+[data-theme="light"] .cmd-history-dropdown {
+  background: var(--surface-1);
+  border-color: var(--hairline-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] .cmd-history-item { color: var(--ink); }
+[data-theme="light"] .cmd-history-item:hover { background: var(--surface-3); }
+
+/* ════════════════════════════════════════════════════════════════
+   无障碍增强（参考 GitHub Primer a11y guidelines）
+   - 统一 :focus-visible 焦点环（鼠标点击不显示，键盘 tab 显示）
+   - 按钮 / 链接 / 输入框分别定义 focus-visible
+   - sidebar 键盘快捷键帮助按钮
+   - 全局 prefers-reduced-motion 兜底
+   ════════════════════════════════════════════════════════════════ */
+
+/* ─── 统一焦点环（Primer focus ring） ───
+   :focus-visible 仅在键盘导航时显示，鼠标点击不触发，符合 WCAG 2.4.7。
+   全局规则已在上方定义，此处显式补齐按钮 / 链接 / 输入框三类元素的契约。 */
+
+/* 链接：焦点环贴合文本，避免整行高亮 */
+a[href]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* 按钮：焦点环贴合按钮边界，圆角跟随 */
+.btn:focus-visible,
+button:focus-visible,
+.dep-opt:focus-visible,
+.palette-trigger:focus-visible,
+.sidebar-toggle-btn:focus-visible,
+.theme-toggle:focus-visible,
+.notify-toggle:focus-visible,
+.kbd-help-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 输入框 / 选择框 / 文本域：焦点环贴合控件，不与 border 冲突 */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.form-control:focus-visible,
+.palette-input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* skip-link 聚焦态：键盘 tab 时滑入视图（补充 :focus-visible） */
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* mainContent 被锚点聚焦时去除浏览器默认虚框，保留 scrollIntoView 行为 */
+#mainContent:focus-visible {
+  outline: none;
+}
+
+/* ─── sidebar 键盘快捷键帮助按钮 ───
+   与 .notify-toggle 视觉对齐：32×32 方形图标按钮。 */
+.kbd-help-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  border-radius: var(--r-md);
+  padding: 0;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.kbd-help-toggle:hover {
+  border-color: var(--primary);
+  color: var(--ink);
+}
+.kbd-help-toggle svg,
+.kbd-help-toggle [data-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  flex-shrink: 0;
+}
+.kbd-help-toggle svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+/* 触摸目标最小尺寸（与 notify-toggle / theme-toggle 一致） */
+@media (max-width: 768px) {
+  .kbd-help-toggle { width: 40px; height: 40px; }
+}
+@media (hover: none) and (pointer: coarse) {
+  .kbd-help-toggle { min-height: 44px; min-width: 44px; }
+}
+/* 浅色主题：与 sidebar 一致 */
+[data-theme="light"] .kbd-help-toggle {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+  color: var(--ink-muted);
+}
+
+/* ─── 全局 prefers-reduced-motion（兜底增强） ───
+   上方已存在分散的 reduced-motion 规则，此处统一兜底：
+   禁用所有 transition / animation / scroll 平滑，但保留 display 等状态变化。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+    -webkit-transition-duration: 0.001ms !important;
+  }
+  /* skip-link 滑入改为瞬移，避免位移动画 */
+  .skip-link { transition: none !important; }
+  /* toast 进度条不再动画，但保留可见状态 */
+  .toast-bar { transition: none !important; }
+  /* 导航进度条不再推进，直接占位 */
+  #tdNavProgress { transition: none !important; }
+}
 

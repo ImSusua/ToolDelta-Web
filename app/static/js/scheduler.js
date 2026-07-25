@@ -53,23 +53,22 @@ function loadJobs() {
             var html = '';
             jobs.forEach(function (job) {
                 var enabled = !!job.enabled;
-                // 转义 job.id 防止 onclick 属性上下文注入（单引号闭合）
+                // 通过 data-id 承载 job.id + 事件委托，避免 onchange/onclick 字符串拼接导致的 JS 字面量逃逸
                 var eid = escapeHtml(job.id);
                 html += '<tr>';
                 html += '<td>' + escapeHtml(job.name) + '</td>';
                 html += '<td>' + escapeHtml(typeText(job)) + '</td>';
                 html += '<td><code style="font-size:12px">' + escapeHtml(job.command) + '</code></td>';
                 html += '<td><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
-                    + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' style="accent-color:var(--primary)" '
-                    + 'onchange="toggleEnabled(\'' + eid + '\', this)"> '
+                    + '<input type="checkbox" class="job-toggle" data-id="' + eid + '" ' + (enabled ? 'checked' : '') + ' style="accent-color:var(--primary)"> '
                     + (enabled ? '已启用' : '已关闭') + '</label></td>';
                 html += '<td>' + escapeHtml(job.run_count || 0) + '</td>';
                 html += '<td style="font-size:12px;color:var(--ink-subtle)">' + escapeHtml(job.last_run || '—') + '</td>';
                 html += '<td style="font-size:12px;color:var(--ink-muted)">' + escapeHtml(job.next_run || '—') + '</td>';
                 html += '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'
-                    + '<button class="btn btn-outline btn-sm" onclick="openEdit(\'' + eid + '\')">编辑</button>'
-                    + '<button class="btn btn-outline btn-sm" onclick="runNow(\'' + eid + '\', this)">立即运行</button>'
-                    + '<button class="btn btn-danger btn-sm" onclick="removeJob(\'' + eid + '\')">删除</button>'
+                    + '<button class="btn btn-outline btn-sm job-edit" data-id="' + eid + '">编辑</button>'
+                    + '<button class="btn btn-outline btn-sm job-run" data-id="' + eid + '">立即运行</button>'
+                    + '<button class="btn btn-danger btn-sm job-delete" data-id="' + eid + '">删除</button>'
                     + '</div></td>';
                 html += '</tr>';
             });
@@ -86,6 +85,38 @@ function loadJobs() {
             }
         });
 }
+
+// 事件委托：在 #jobsBody 上集中处理按钮点击 / 勾选切换
+(function () {
+    var body = document.getElementById('jobsBody');
+    if (!body) return;
+    body.addEventListener('click', function (e) {
+        var t = e.target;
+        while (t && t !== body) {
+            if (t.classList) {
+                if (t.classList.contains('job-edit')) {
+                    openEdit(t.getAttribute('data-id') || '');
+                    return;
+                }
+                if (t.classList.contains('job-run')) {
+                    runNow(t.getAttribute('data-id') || '', t);
+                    return;
+                }
+                if (t.classList.contains('job-delete')) {
+                    removeJob(t.getAttribute('data-id') || '');
+                    return;
+                }
+            }
+            t = t.parentNode;
+        }
+    });
+    body.addEventListener('change', function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains('job-toggle')) {
+            toggleEnabled(t.getAttribute('data-id') || '', t);
+        }
+    });
+})();
 
 function toggleEnabled(id, checkbox) {
     // 兼容旧调用 toggleEnabled(id, boolean) 与新调用 toggleEnabled(id, element)

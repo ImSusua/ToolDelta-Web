@@ -92,7 +92,15 @@
 <body class="auth-page">
     <a href="#loginForm" class="skip-link">跳到登录表单</a>
     <script src="/static/js/wallpaper.js"></script>
-    {% if wallpaper_url %}<div class="wallpaper-bg" style="background-image:url('{{ wallpaper_url }}')"></div>{% endif %}
+    {% if wallpaper_url %}<div id="loginWallpaper" class="wallpaper-bg auth-bg" aria-hidden="true"></div>
+    <script>
+      // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
+      (function(){
+        var el = document.getElementById('loginWallpaper');
+        if (el) el.style.backgroundImage = "url(" + {{ wallpaper_url|tojson }} + ")";
+      })();
+    </script>
+    {% endif %}
     <div class="auth-card">
         <span class="logo-big">TD</span>
         <h1>登录</h1>

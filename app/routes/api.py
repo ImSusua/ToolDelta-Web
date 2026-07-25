@@ -42,6 +42,14 @@ def audit(action, detail=""):
     ip = request.remote_addr or "?"
     log_service.info(f"[{user}@{ip}] {action} {detail}", "AUDIT")
 
+def _internal_error(e, action="操作"):
+    """统一处理内部异常：记录详情到日志，只返回通用错误给客户端，避免 str(e) 泄露内部路径/堆栈（P1-5）"""
+    try:
+        log_service.error(action + "失败: " + str(e), "API")
+    except Exception:
+        pass
+    return jsonify({"success": False, "error": action + "失败，请查看日志"})
+
 # ─── ToolDelta 进程管理 ────────────────────────
 
 @bp.route("/status")
@@ -165,7 +173,7 @@ def upload_plugin():
         audit("上传插件", f"文件={f.filename}")
         return jsonify({"success": True})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        return _internal_error(e, "上传插件")
 
 @bp.route("/plugins/readme")
 def plugin_readme():
@@ -314,7 +322,7 @@ def market_connect():
             })
         return jsonify({"success": True, "source_name": tree.get("SourceName", url), "plugins": plugins_list})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        return _internal_error(e, "连接插件市场")
 
 # ─── 插件市场 ────────────────────────
 
@@ -496,15 +504,21 @@ def reset_to_factory():
 
 @bp.route("/logs")
 def get_logs():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     tail = request.args.get("tail", 200, type=int)
     return jsonify({"lines": log_service.get_today_logs(tail)})
 
 @bp.route("/logs/files")
 def log_files():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     return jsonify(log_service.list_log_files())
 
 @bp.route("/logs/file")
 def log_file():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     date = request.args.get("date", "")
     # 日期只允许数字与连字符，防止路径遍历读取任意文件（P1-1）
     if not date or not date.replace("-", "").isdigit():
@@ -515,6 +529,8 @@ def log_file():
 
 @bp.route("/system/info")
 def system_info():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     import sys
     import platform
     td_dir = current_app.config["TOOLDELTA_DIR"]
@@ -532,6 +548,8 @@ def system_info():
 
 @bp.route("/launcher/config")
 def launcher_config():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     td_dir = current_app.config["TOOLDELTA_DIR"]
     cfg_path = os.path.join(td_dir, "ToolDelta基本配置.json")
     if os.path.isfile(cfg_path):

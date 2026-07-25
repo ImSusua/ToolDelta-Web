@@ -10,17 +10,26 @@ class MarketService:
         self._plugins = None
         self._packages = None
         self._id_map = None
+        self._scan_mtime = None  # 上次 scan 时的 market 目录 mtime
 
     def get_market_dir(self):
         return current_app.config["PLUGIN_MARKET_DIR"]
 
     def scan(self):
         mdir = self.get_market_dir()
+        # mtime 缓存：目录未变化则跳过扫描，避免每次请求全量扫描 + 解析 JSON
+        try:
+            cur_mtime = os.path.getmtime(mdir)
+        except Exception:
+            cur_mtime = 0
+        if self._scan_mtime is not None and self._scan_mtime == cur_mtime and self._plugins is not None:
+            return
         self._plugins = []
         self._packages = []
         self._id_map = {}
         if not os.path.isdir(mdir):
             os.makedirs(mdir, exist_ok=True)
+            self._scan_mtime = cur_mtime
             return
         for d in sorted(os.listdir(mdir)):
             full = os.path.join(mdir, d)
@@ -61,14 +70,19 @@ class MarketService:
                     "dir": full,
                 })
                 self._id_map[pid] = d
+        self._scan_mtime = cur_mtime
 
     def get_plugins(self, refresh=False):
-        if refresh or self._plugins is None:
+        if refresh:
+            self._scan_mtime = None  # 强制重新扫描
+        if self._plugins is None:
             self.scan()
         return self._plugins or []
 
     def get_packages(self, refresh=False):
-        if refresh or self._packages is None:
+        if refresh:
+            self._scan_mtime = None  # 强制重新扫描
+        if self._packages is None:
             self.scan()
         return self._packages or []
 

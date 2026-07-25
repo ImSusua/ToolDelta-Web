@@ -47,6 +47,14 @@ def ok(data=None):
 def fail(msg):
     return jsonify({"success": False, "error": msg})
 
+def _internal_error(e, action="操作"):
+    """统一处理内部异常：记录详情到日志，只返回通用错误给客户端，避免 str(e) 泄露内部路径/堆栈（P1-5）"""
+    try:
+        log_service.error(action + "失败: " + str(e), "FILES")
+    except Exception:
+        pass
+    return jsonify({"success": False, "error": action + "失败，请查看日志"})
+
 def _admin_required():
     """文件管理所有写操作均要求管理员，避免普通用户(role=1)任意写删 ToolDelta 目录文件。"""
     if session.get("role") != 10:
@@ -121,10 +129,12 @@ def list_files():
             "total": len(names),
         })
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "列出文件")
 
 @bp.route("/read")
 def read_file():
+    unauthorized = _admin_required()
+    if unauthorized: return unauthorized
     raw = request.args.get("path", "")
     full = safe_path(raw)
     if not full:
@@ -142,7 +152,7 @@ def read_file():
         audit("读取文件", f"路径={raw}")
         return ok({"content": content, "path": os.path.relpath(full, ALLOWED_ROOT), "size": size})
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "读取文件")
 
 @bp.route("/save", methods=["POST"])
 def save_file():
@@ -165,7 +175,7 @@ def save_file():
         audit("保存文件", f"路径={raw}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "保存文件")
 
 @bp.route("/upload", methods=["POST"])
 def upload_file():
@@ -206,7 +216,7 @@ def upload_file():
         audit("上传文件", f"路径={os.path.join(raw, f.filename)}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "上传文件")
 
 @bp.route("/delete", methods=["POST"])
 def delete_item():
@@ -229,7 +239,7 @@ def delete_item():
         audit("删除", f"路径={raw}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "删除文件")
 
 @bp.route("/mkdir", methods=["POST"])
 def make_dir():
@@ -250,10 +260,12 @@ def make_dir():
         audit("创建目录", f"路径={raw}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "创建目录")
 
 @bp.route("/download")
 def download_file():
+    unauthorized = _admin_required()
+    if unauthorized: return unauthorized
     raw = request.args.get("path", "")
     full = safe_path(raw)
     if not full or not os.path.isfile(full):
@@ -287,7 +299,7 @@ def rename_item():
         audit("重命名", f"{raw} -> {new_name}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "重命名")
 
 @bp.route("/move", methods=["POST"])
 def move_item():
@@ -313,7 +325,7 @@ def move_item():
         audit("移动", f"{raw} -> {dest_raw}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "移动文件")
 
 @bp.route("/copy", methods=["POST"])
 def copy_item():
@@ -342,10 +354,12 @@ def copy_item():
         audit("复制", f"{raw} -> {dest_raw}")
         return ok()
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "复制文件")
 
 @bp.route("/download-dir")
 def download_dir():
+    unauthorized = _admin_required()
+    if unauthorized: return unauthorized
     raw = request.args.get("path", "")
     full = safe_path(raw)
     if not full or not os.path.isdir(full):
@@ -389,7 +403,7 @@ def download_dir():
     except Exception as e:
         if os.path.isfile(tmp_path):
             os.remove(tmp_path)
-        return fail(str(e))
+        return _internal_error(e, "打包目录下载")
     audit("下载目录", f"路径={raw}")
 
     @after_this_request
@@ -405,6 +419,8 @@ def download_dir():
 
 @bp.route("/search")
 def search_files():
+    unauthorized = _admin_required()
+    if unauthorized: return unauthorized
     raw = request.args.get("path", "")
     query = request.args.get("q", "").strip().lower()
     if not query:
@@ -444,7 +460,7 @@ def search_files():
                     })
         return ok({"entries": results, "current": os.path.relpath(full, ALLOWED_ROOT), "root": ALLOWED_ROOT})
     except Exception as e:
-        return fail(str(e))
+        return _internal_error(e, "搜索文件")
 
 @bp.route("/batch-delete", methods=["POST"])
 def batch_delete():
@@ -479,7 +495,12 @@ def batch_delete():
                 os.remove(full)
             deleted.append(raw)
         except Exception as e:
-            errors.append(f"{raw}: {e}")
+            # 记录详情到日志，对客户端只返回通用错误，避免泄露内部路径/堆栈（P1-5）
+            try:
+                log_service.error("批量删除失败: " + str(e), "FILES")
+            except Exception:
+                pass
+            errors.append(f"{raw}: 删除失败，请查看日志")
     if deleted:
         audit("批量删除", str(deleted))
     return ok({"deleted": deleted, "errors": errors})

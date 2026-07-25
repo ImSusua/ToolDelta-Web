@@ -12,7 +12,7 @@ from app.market_service import market_service
 
 class PluginService:
     def __init__(self):
-        self._cache = None
+        self._cache = None  # (mtime, plugins_list) for list_plugins
         self._cfg_lock = threading.Lock()
 
     def get_classic_plugin_path(self):
@@ -36,13 +36,21 @@ class PluginService:
         # secure_filename 对中文等会返回空，因此仅在它非空且与原名差异大时拒绝
         if not s:
             return None
-        return name
+        return s
 
     def list_plugins(self):
         plugins = []
         pdir = self.get_classic_plugin_path()
+        # mtime 缓存：目录未变化则直接返回缓存，避免 dashboard 5 秒轮询全量扫描 + 解析 JSON
+        try:
+            cur_mtime = os.path.getmtime(pdir)
+        except Exception:
+            cur_mtime = 0
+        if self._cache is not None and self._cache[0] == cur_mtime:
+            return self._cache[1]
         if not os.path.isdir(pdir):
             os.makedirs(pdir, exist_ok=True)
+            self._cache = (cur_mtime, plugins)
             return plugins
         for d in sorted(os.listdir(pdir)):
             full = os.path.join(pdir, d)
@@ -70,6 +78,7 @@ class PluginService:
                 "has_readme": os.path.isfile(os.path.join(full, "readme.md")) or os.path.isfile(os.path.join(full, "readme.txt")),
                 "has_config": os.path.isfile(os.path.join(self.get_cfg_path(), f"{name}.json")),
             })
+        self._cache = (cur_mtime, plugins)
         return plugins
 
     def toggle_plugin(self, name, enable):
@@ -151,6 +160,8 @@ class PluginService:
                         pass
                 plugin_name = name or datas.get("plugin-id") or datas.get("name") or "plugin"
                 plugin_root = temp_dir
+                if self._safe_name(plugin_name) is None:
+                    return False, "插件名不合法"
             else:
                 raise ValueError("压缩包中未找到有效的插件结构（缺少 __init__.py）")
 
@@ -161,6 +172,8 @@ class PluginService:
                     shutil.rmtree(existing)
 
             target = os.path.join(pdir, plugin_name)
+            if not os.path.abspath(target).startswith(os.path.abspath(pdir) + os.sep):
+                return False, "插件名不合法"
             if plugin_root == temp_dir:
                 # 扁平结构：先建目录，再把内容移入
                 os.makedirs(target, exist_ok=True)
@@ -285,10 +298,14 @@ class PluginService:
             return False, "插件不存在"
         src_dir = plugin_data.get("dir")
         plugin_name = plugin_data.get("name")
+        if self._safe_name(plugin_name) is None:
+            return False, "插件名不合法"
         if not src_dir or not os.path.isdir(src_dir):
             return False, "插件源目录不存在，请刷新市场后重试"
         pdir = self.get_classic_plugin_path()
         target = os.path.join(pdir, plugin_name)
+        if not os.path.abspath(target).startswith(os.path.abspath(pdir) + os.sep):
+            return False, "插件名不合法"
         disabled_target = os.path.join(pdir, plugin_name + "+disabled")
         if os.path.exists(target) or os.path.exists(disabled_target):
             return False, f"插件已存在: {plugin_name}"

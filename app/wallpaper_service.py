@@ -51,6 +51,9 @@ def get_wallpaper():
         with open(WALLPAPER_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         url = data.get("url", "")
+        # 与 save 一致的危险字符校验：拦截 ) < > " ' ` \ 防 CSS/HTML 上下文注入
+        if not isinstance(url, str) or re.search(r'[<>"\'`\\)]', url):
+            return ""
         return url if _is_safe_url(url) else ""
     except Exception:
         return ""
@@ -72,6 +75,11 @@ def fetch_new():
 
 def save(url):
     if not WALLPAPER_FILE:
+        return
+    # 显式校验 URL 格式：必须以 http:// 或 https:// 开头，且不含可造成 CSS/HTML 逃逸的危险字符
+    if not isinstance(url, str) or not (url.startswith("http://") or url.startswith("https://")):
+        return
+    if re.search(r'[<>"\'\\)]', url):
         return
     if not _is_safe_url(url):
         return
