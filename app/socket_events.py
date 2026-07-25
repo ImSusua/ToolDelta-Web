@@ -55,6 +55,10 @@ def init_socketio(socketio):
         if not session.get("authenticated"):
             disconnect()
             return
+        # 命令发送需管理员权限，与 /api/tool/command HTTP 端点保持一致
+        if session.get("role") != 10:
+            emit("console_output", {"type": "system", "data": "无权限发送命令（需管理员）", "data_html": "无权限发送命令（需管理员）"})
+            return
         # 兼容字符串与 {"cmd": "..."} / {"command": "..."} 两种前端格式
         if isinstance(data, dict):
             cmd = data.get("cmd") or data.get("command") or ""
@@ -122,6 +126,10 @@ def init_socketio(socketio):
         from flask_socketio import disconnect
         if not session.get("authenticated"):
             disconnect()
+            return
+        # 依赖安装需管理员权限，与 /api/dependencies/install HTTP 端点保持一致
+        if session.get("role") != 10:
+            emit("console_output", {"type": "system", "data": "无权限安装依赖（需管理员）", "data_html": "无权限安装依赖（需管理员）"})
             return
         return dependency_service.start_install()
 

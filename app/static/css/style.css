@@ -430,6 +430,100 @@ a.btn { color: inherit; }
   border-bottom: 1px solid var(--hairline);
 }
 
+/* 控制台顶栏（与新 .console-bar 元素配套，与 .console-header 视觉风格一致） */
+.console-bar {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--console-bar);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-sm);
+}
+/* 连接状态文本：与 .status-conn 联动，状态修饰类切换颜色 */
+.status-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-subtle);
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  line-height: 1.4;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
+}
+/* 状态点（小圆点）通过 ::before 生成，连接/断开/重连分别配色 */
+.status-conn::before {
+  content: '';
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.status-conn.connecting { color: var(--warning); border-color: var(--warning); }
+.status-conn.connected   { color: var(--success); border-color: var(--success); }
+.status-conn.disconnected { color: var(--ink-subtle); }
+
+/* ToolDelta 进程状态徽章：与连接状态视觉分离，避免用户混淆 */
+.process-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink-subtle);
+  line-height: 1.4;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.process-status.stopped { color: var(--ink-subtle); }
+.process-status.running { color: var(--success); border-color: var(--success); }
+.process-status.starting { color: var(--warning); border-color: var(--warning); }
+
+/* 新消息提示胶囊：用户向上滚动时显示，点击跳到最新 */
+.new-msg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(94, 106, 210, 0.35);
+  transition: transform var(--duration-fast), background var(--duration-fast);
+  user-select: none;
+}
+.new-msg-pill:hover { background: var(--primary-hover); transform: translateY(-1px); }
+.new-msg-pill:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; }
+
+/* 收藏快捷命令条：横向滚动条，避免长命令换行撑高 console-bar */
+.fav-strip {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--console-bar);
+  border-bottom: 1px solid var(--hairline);
+  scrollbar-width: thin;
+}
+.fav-strip:empty { display: none; }
+.fav-strip::-webkit-scrollbar { height: 4px; }
+.fav-strip::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 4px; }
+
+
 
 
 /* ─── Tables ─── */

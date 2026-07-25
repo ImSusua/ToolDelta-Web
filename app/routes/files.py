@@ -47,6 +47,12 @@ def ok(data=None):
 def fail(msg):
     return jsonify({"success": False, "error": msg})
 
+def _admin_required():
+    """文件管理所有写操作均要求管理员，避免普通用户(role=1)任意写删 ToolDelta 目录文件。"""
+    if session.get("role") != 10:
+        return fail("无权限")
+    return None
+
 def safe_path(path_str):
     if not path_str:
         return ALLOWED_ROOT
@@ -140,6 +146,8 @@ def read_file():
 
 @bp.route("/save", methods=["POST"])
 def save_file():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     content = data.get("content") or ""
@@ -161,6 +169,8 @@ def save_file():
 
 @bp.route("/upload", methods=["POST"])
 def upload_file():
+    err = _admin_required()
+    if err: return err
     raw = request.form.get("path", "")
     full = safe_path(raw)
     if not full:
@@ -200,6 +210,8 @@ def upload_file():
 
 @bp.route("/delete", methods=["POST"])
 def delete_item():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     full = safe_path(raw)
@@ -221,6 +233,8 @@ def delete_item():
 
 @bp.route("/mkdir", methods=["POST"])
 def make_dir():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     full = safe_path(raw)
@@ -251,6 +265,8 @@ def download_file():
 
 @bp.route("/rename", methods=["POST"])
 def rename_item():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     new_name = _safe_name(data.get("new_name"))
@@ -275,6 +291,8 @@ def rename_item():
 
 @bp.route("/move", methods=["POST"])
 def move_item():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     dest_raw = (data.get("destination") or "").strip()
@@ -299,6 +317,8 @@ def move_item():
 
 @bp.route("/copy", methods=["POST"])
 def copy_item():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     raw = (data.get("path") or "").strip()
     dest_raw = (data.get("destination") or "").strip()
@@ -428,6 +448,8 @@ def search_files():
 
 @bp.route("/batch-delete", methods=["POST"])
 def batch_delete():
+    err = _admin_required()
+    if err: return err
     data = request.get_json(silent=True) or {}
     paths = data.get("paths") or []
     if not paths:

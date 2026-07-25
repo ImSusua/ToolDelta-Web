@@ -51,6 +51,8 @@ def status():
 
 @bp.route("/tool/start", methods=["POST"])
 def tool_start():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     ok = tooldelta_manager.start()
     if ok:
         audit("启动 ToolDelta")
@@ -58,6 +60,8 @@ def tool_start():
 
 @bp.route("/tool/stop", methods=["POST"])
 def tool_stop():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     ok = tooldelta_manager.stop()
     if ok:
         audit("停止 ToolDelta")
@@ -65,6 +69,8 @@ def tool_stop():
 
 @bp.route("/tool/restart", methods=["POST"])
 def tool_restart():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     ok = tooldelta_manager.restart()
     if ok:
         audit("重启 ToolDelta")
@@ -72,6 +78,8 @@ def tool_restart():
 
 @bp.route("/tool/command", methods=["POST"])
 def tool_command():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     cmd = data.get("cmd", "")
     if not isinstance(cmd, str):
@@ -96,6 +104,8 @@ def dependencies_status():
 
 @bp.route("/dependencies/install", methods=["POST"])
 def dependencies_install():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     from app.dependency_service import dependency_service
     data = request.get_json(silent=True) or {}
     mode = data.get("mode")
@@ -111,6 +121,8 @@ def list_plugins():
 
 @bp.route("/plugins/toggle", methods=["POST"])
 def toggle_plugin():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name, enable = data.get("name"), data.get("enable")
     if not name:
@@ -122,6 +134,8 @@ def toggle_plugin():
 
 @bp.route("/plugins/delete", methods=["POST"])
 def delete_plugin():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name = data.get("name")
     if not name:
@@ -133,6 +147,8 @@ def delete_plugin():
 
 @bp.route("/plugins/upload", methods=["POST"])
 def upload_plugin():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     if "file" not in request.files:
         return jsonify({"success": False, "error": "未上传文件"})
     f = request.files["file"]
@@ -164,6 +180,8 @@ def plugin_config():
 
 @bp.route("/plugins/config", methods=["POST"])
 def save_plugin_config():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name, config = data.get("name"), data.get("config")
     if not name or not config:
@@ -180,6 +198,8 @@ def plugin_data_files():
 
 @bp.route("/plugins/data-upload", methods=["POST"])
 def upload_data_file():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     name = request.form.get("name")
     if not name:
         return jsonify({"success": False, "error": "缺少插件名"})
@@ -191,6 +211,8 @@ def upload_data_file():
 
 @bp.route("/plugins/data-delete", methods=["POST"])
 def delete_data_file():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name = data.get("name")
     filename = data.get("file")
@@ -201,6 +223,8 @@ def delete_data_file():
 
 @bp.route("/plugins/config-upload", methods=["POST"])
 def upload_config_file():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     name = request.form.get("name")
     if not name:
         return jsonify({"success": False, "error": "缺少插件名"})
@@ -218,6 +242,8 @@ def preset_plugins():
 
 @bp.route("/plugins/install-preset", methods=["POST"])
 def install_preset():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     plugin_id = data.get("plugin_id")
     if not plugin_id:
@@ -229,6 +255,8 @@ def install_preset():
 
 @bp.route("/plugins/install-preset-batch", methods=["POST"])
 def install_preset_batch():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     ids = data.get("plugin_ids", [])
     results = plugin_service.install_preset_plugins_batch(ids)
@@ -236,6 +264,8 @@ def install_preset_batch():
 
 @bp.route("/plugins/install-network", methods=["POST"])
 def install_network():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").rstrip("/")
     plugin_id = data.get("plugin_id")
@@ -253,6 +283,8 @@ def market_sources():
 
 @bp.route("/market/connect", methods=["POST"])
 def market_connect():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").rstrip("/")
     if len(url) > 2048:
@@ -400,11 +432,17 @@ def list_backups():
 
 @bp.route("/backup/create", methods=["POST"])
 def create_backup():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name = data.get("name")
-    meta = backup_service.create_backup(name)
+    try:
+        meta = backup_service.create_backup(name)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)})
     audit("创建备份", f"名称={meta.get('name','?')}")
-    return jsonify(meta)
+    # 与 restore/delete 保持返回结构一致（前端期望 d.success），见 backup.html:100
+    return jsonify({"success": True, "data": meta})
 
 @bp.route("/backup/restore", methods=["POST"])
 def restore_backup():
@@ -486,6 +524,8 @@ def launcher_config():
 
 @bp.route("/launcher/config", methods=["POST"])
 def save_launcher_config():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     # 白名单：只允许前端可安全写入的配置项
     ALLOWED_KEYS = {
@@ -524,6 +564,8 @@ def get_fbtoken():
 
 @bp.route("/fbtoken", methods=["POST"])
 def save_fbtoken():
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     token = (data.get("token") or "").strip()
     # fbtoken 长度限制，防止无意义超大写入（P2-2）

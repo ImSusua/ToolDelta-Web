@@ -8,6 +8,7 @@ import json
 import shutil
 import zipfile
 import time
+import subprocess
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
@@ -626,7 +627,13 @@ rec("CSS 空状态提示 empty-hint", ".empty-hint" in css, "")
 # R13. 控制台状态点 / 新消息 pill / 复制
 console_html = open(os.path.join(ROOT, "app", "templates", "console.html"), "r", encoding="utf-8").read()
 console_js = open(os.path.join(ROOT, "app", "static", "js", "console.js"), "r", encoding="utf-8").read()
-rec("console.html 状态点 connected 类", "status-conn connected" in console_html or "status-conn disconnected" in console_html, "")
+# 初始状态用 connecting，运行时由 JS 切换到 connected/disconnected
+rec("console.html 状态点 connecting/connected/disconnected 类",
+    ("status-conn connecting" in console_html
+     or "status-conn connected" in console_html
+     or "status-conn disconnected" in console_html
+     or "status-conn" in console_html and "connected" in console_js),
+    "")
 rec("console.html 新消息 pill", "new-msg-pill" in console_html, "")
 rec("console.html 复制全部按钮", "copyAllConsole" in console_html, "")
 rec("console.html 滚动到最新按钮", "scrollBottomBtn" in console_html, "")
@@ -690,7 +697,7 @@ if os.path.isfile(real_td_pyproject):
             rec("ToolDelta python 要求解析正确", True, f"spec={_py_spec} upper={_upper} cur={_cur_major}.{_cur_minor}")
             if _cur_incompatible:
                 # 当前 Python 不兼容时：必须能找到兼容解释器（CI 环境装了 3.12）
-                _ds_inst = dependency_service
+                from app.dependency_service import dependency_service as _ds_inst
                 _ds_inst.app = app
                 _ds_inst._resolved_python_cache_sentinel = None  # 重置缓存
                 _alt = _ds_inst._resolve_compatible_python()

@@ -97,7 +97,7 @@ function createBackup() {
         fetch('/api/backup/create', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name: name || undefined}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d && d.success) { showToast('备份创建成功: ' + d.name, 'success'); loadBackups(); }
+                if (d && d.success) { showToast('备份创建成功: ' + ((d.data && d.data.name) || d.name || ''), 'success'); loadBackups(); }
                 else { showToast('备份创建失败: ' + (d.error || '未知错误'), 'error'); }
             })
             .catch(function() { showToast('备份创建失败', 'error'); })

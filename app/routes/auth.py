@@ -166,6 +166,8 @@ def settings_page():
 
 @bp.route("/api/users")
 def list_users():
+    if session.get("role") != 10:
+        return fail("无权限")
     users = auth_service.get_users()
     safe = [{"username": u["username"], "role": u["role"],
              "created_at": u.get("created_at", ""),
@@ -240,6 +242,8 @@ def get_wallpaper():
 
 @bp.route("/api/settings/wallpaper/fetch", methods=["POST"])
 def fetch_wallpaper():
+    if session.get("role") != 10:
+        return fail("无权限")
     data = {}
     try:
         data = request.get_json(silent=True) or {}
@@ -266,6 +270,8 @@ def fetch_wallpaper():
 
 @bp.route("/api/settings/wallpaper/clear", methods=["POST"])
 def clear_wallpaper():
+    if session.get("role") != 10:
+        return fail("无权限")
     wp_service.clear()
     audit("清除壁纸")
     return ok()
