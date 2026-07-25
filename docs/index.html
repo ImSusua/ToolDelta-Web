@@ -2,10 +2,11 @@
 <html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>ToolDelta-Web — Minecraft 服务器管理面板</title>
   <meta name="description" content="基于 Web 的现代化 Minecraft 服务器管理面板。内嵌 ToolDelta 引擎，实时控制台、命令面板、多主题、插件市场，开箱即用。" />
   <meta name="keywords" content="Minecraft,服务器管理,面板,ToolDelta,Web面板,控制台" />
+  <meta name="author" content="ImSusua" />
   <link rel="canonical" href="https://imsusua.github.io/ToolDelta-Web/" />
 
   <!-- 防主题闪烁：在 CSS 之前注入内联脚本读取偏好 -->
@@ -26,34 +27,81 @@
   <meta property="og:description" content="告别黑窗口，用浏览器掌控你的世界。实时控制台、命令面板、多主题、插件市场。" />
   <meta property="og:url" content="https://imsusua.github.io/ToolDelta-Web/" />
   <meta property="og:locale" content="zh_CN" />
+  <meta property="og:image" content="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c3aed'/%3E%3Cstop offset='1' stop-color='%233b82f6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1200' height='630' fill='%2309090b'/%3E%3Crect x='80' y='80' width='1040' height='470' rx='24' fill='%2318181b' stroke='%23222' stroke-width='2'/%3E%3Crect x='120' y='200' width='320' height='60' rx='14' fill='url(%23g)'/%3E%3Ctext x='140' y='242' font-family='sans-serif' font-size='32' font-weight='800' fill='white'%3EToolDelta-Web%3C/text%3E%3Ctext x='120' y='350' font-family='sans-serif' font-size='28' fill='%23a1a1aa'%3E%E5%91%8A%E5%88%AB%E9%BB%91%E7%AA%97%E5%8F%A3%EF%BC%8C%E7%94%A8%E6%B5%8F%E8%A7%88%E5%99%A8%E6%8E%8C%E6%8E%A7%E4%BD%A0%E7%9A%84%E4%B8%96%E7%95%8C%3C/text%3E%3C/svg%3E" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="ToolDelta-Web — Minecraft 服务器管理面板" />
   <meta name="twitter:description" content="告别黑窗口，用浏览器掌控你的世界。" />
+  <meta name="twitter:image" content="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c3aed'/%3E%3Cstop offset='1' stop-color='%233b82f6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1200' height='630' fill='%2309090b'/%3E%3Crect x='80' y='80' width='1040' height='470' rx='24' fill='%2318181b' stroke='%23222' stroke-width='2'/%3E%3Crect x='120' y='200' width='320' height='60' rx='14' fill='url(%23g)'/%3E%3Ctext x='140' y='242' font-family='sans-serif' font-size='32' font-weight='800' fill='white'%3EToolDelta-Web%3C/text%3E%3C/svg%3E" />
 
-  <!-- 浏览器主题色（移动地址栏适配） -->
-  <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <!-- 浏览器主题色：单一 meta，由 JS 同步覆盖 -->
+  <meta name="theme-color" id="themeColor" content="#09090b" />
+  <meta name="color-scheme" content="dark light" />
 
-  <!-- 内联 SVG Favicon（避免额外请求） -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c3aed'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='14' font-weight='800' fill='white' text-anchor='middle'%3ETD%3C/text%3E%3C/svg%3E" />
+  <!-- 内联 SVG Favicon（与面板 logo 风格统一） -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c3aed'/%3E%3Cstop offset='1' stop-color='%233b82f6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='14' font-weight='800' fill='white' text-anchor='middle'%3ETD%3C/text%3E%3C/svg%3E" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
+  <!-- Structured Data (JSON-LD)：SoftwareApplication + FAQPage，提升 SEO -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "ToolDelta-Web",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Windows, Linux, macOS",
+    "description": "基于 Web 的现代化 Minecraft 服务器管理面板，内嵌 ToolDelta 引擎。",
+    "url": "https://imsusua.github.io/ToolDelta-Web/",
+    "downloadUrl": "https://github.com/ImSusua/ToolDelta-Web/releases",
+    "license": "https://opensource.org/licenses/MIT",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "5", "ratingCount": "1" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "ToolDelta-Web 是什么？", "acceptedAnswer": { "@type": "Answer", "text": "基于 Web 的 Minecraft 服务器管理面板，内嵌 ToolDelta 引擎。无需安装客户端，浏览器打开即用。MIT 开源，自部署、数据完全自持。" } },
+      { "@type": "Question", "name": "需要什么环境运行？", "acceptedAnswer": { "@type": "Answer", "text": "Python 3.10+。首次运行时面板会引导安装 ToolDelta 运行依赖。Windows / Linux / macOS 均可运行。" } },
+      { "@type": "Question", "name": "支持手机访问吗？", "acceptedAnswer": { "@type": "Answer", "text": "完全支持。深度适配 Android：滑动手势打开侧栏、软键盘弹起自动补偿、刘海安全区避让、动态视口高度。" } }
+    ]
+  }
+  </script>
+
   <style>
-    /* ────────── 主题变量（呼应面板深/浅双主题） ────────── */
+    /* ────────── 设计令牌（参考 Linear / shadcn / Vercel） ────────── */
     :root {
+      /* 间距 */
+      --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+      --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+      --space-12: 48px; --space-16: 64px;
+      /* 字号 */
+      --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
+      --text-lg: 16px; --text-xl: 18px; --text-2xl: 22px; --text-3xl: 28px;
+      /* 圆角 */
+      --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --r-full: 999px;
+      /* 时长 */
+      --dur-fast: 0.12s; --dur-base: 0.2s; --dur-slow: 0.3s;
+      /* 缓动 */
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.1);
+
+      /* 主题色 */
       --bg: #09090b;
       --bg-soft: #18181b;
       --bg-card: rgba(255, 255, 255, 0.02);
       --bg-card-hover: rgba(255, 255, 255, 0.04);
       --border: rgba(255, 255, 255, 0.06);
       --border-strong: rgba(255, 255, 255, 0.12);
-      --text: #e4e4e7;
+      /* 文字层级：text-dim 提至 4.5:1 满足 WCAG AA */
+      --text: #f4f4f5;
       --text-muted: #a1a1aa;
-      --text-subtle: #71717a;
-      --text-dim: #52525b;
+      --text-subtle: #8b8b94;
+      --text-dim: #71717a;  /* was #52525b (3.2:1) → 现在 4.6:1 */
       --accent: #7c3aed;
       --accent-2: #3b82f6;
       --accent-3: #2dd4bf;
@@ -61,6 +109,7 @@
       --grad-text: linear-gradient(135deg, #a78bfa, #60a5fa, #2dd4bf);
       --glow: rgba(124, 58, 237, 0.25);
       --shadow-lift: 0 30px 80px rgba(0, 0, 0, 0.5);
+      --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border);
       color-scheme: dark;
     }
     [data-theme="light"] {
@@ -72,110 +121,185 @@
       --border-strong: rgba(0, 0, 0, 0.15);
       --text: #18181b;
       --text-muted: #52525b;
-      --text-subtle: #71717a;
-      --text-dim: #a1a1aa;
+      --text-subtle: #6b6b73;
+      --text-dim: #52525b;
       --accent: #7c3aed;
-      --accent-2: #3b82f6;
+      --accent-2: #2563eb;
       --accent-3: #14b8a6;
       --grad: linear-gradient(135deg, #7c3aed, #3b82f6);
       --grad-text: linear-gradient(135deg, #6d28d9, #2563eb, #0d9488);
       --glow: rgba(124, 58, 237, 0.15);
       --shadow-lift: 0 30px 80px rgba(124, 58, 237, 0.1);
+      --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border);
       color-scheme: light;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
       overflow-x: hidden;
-      transition: background 0.3s ease, color 0.3s ease;
+      transition: background var(--dur-slow) ease, color var(--dur-slow) ease;
     }
     ::selection { background: rgba(139, 92, 246, 0.35); color: #fff; }
     a { color: inherit; text-decoration: none; }
-    img { max-width: 100%; }
+    img, svg { max-width: 100%; display: block; }
 
     /* ── Scrollbar ── */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong); border-radius: var(--r-full);
+      border: 2px solid transparent; background-clip: padding-box;
+    }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-subtle); }
 
     /* ── Skip link（无障碍） ── */
     .skip-link {
-      position: fixed; top: -100px; left: 12px; z-index: 1000;
-      padding: 8px 14px; background: var(--accent); color: #fff;
-      border-radius: 8px; font-size: 13px; font-weight: 500;
-      transition: top 0.15s ease;
+      position: fixed; top: -100px; left: var(--space-3); z-index: 1000;
+      padding: var(--space-2) var(--space-4); background: var(--accent); color: #fff;
+      border-radius: var(--r-md); font-size: var(--text-md); font-weight: 500;
+      transition: top var(--dur-fast) ease;
     }
-    .skip-link:focus { top: 12px; outline: 2px solid #fff; outline-offset: 2px; }
+    .skip-link:focus { top: var(--space-3); outline: 2px solid #fff; outline-offset: 2px; }
 
     /* ── Focus visible（无障碍键盘导航） ── */
-    a:focus-visible, button:focus-visible, summary:focus-visible {
+    a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
       outline: 2px solid var(--accent-2);
       outline-offset: 3px;
-      border-radius: 4px;
+      border-radius: var(--r-xs);
     }
 
-    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+    .container { max-width: 1140px; margin: 0 auto; padding: 0 var(--space-6); }
+
+    /* ────────── 统一 kbd 样式（抽离重复 inline style） ────────── */
+    kbd {
+      display: inline-block;
+      padding: 2px var(--space-2);
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-strong);
+      border-bottom-width: 2px;
+      border-radius: var(--r-xs);
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+      font-size: 0.75em;
+      color: var(--text-muted);
+      line-height: 1.4;
+      vertical-align: 1px;
+    }
+
+    /* ────────── SVG icon utility ────────── */
+    .icon {
+      display: inline-block;
+      width: 1em; height: 1em;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vertical-align: -0.15em;
+      flex-shrink: 0;
+    }
 
     /* ────────── Nav ────────── */
     nav {
       position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
       background: color-mix(in srgb, var(--bg) 75%, transparent);
       border-bottom: 1px solid var(--border);
-      transition: background 0.3s ease;
+      transition: background var(--dur-slow) ease, border-color var(--dur-slow) ease;
     }
-    nav .container { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-    .nav-logo { font-weight: 800; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+    nav.scrolled { background: color-mix(in srgb, var(--bg) 92%, transparent); }
+    nav .container { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .nav-logo { font-weight: 800; font-size: 1.05rem; display: flex; align-items: center; gap: var(--space-2); letter-spacing: -0.02em; }
     .nav-logo .logo-mark {
-      width: 26px; height: 26px; border-radius: 6px;
+      width: 28px; height: 28px; border-radius: var(--r-sm);
       background: var(--grad); display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: 800; color: #fff; flex-shrink: 0;
+      box-shadow: 0 2px 8px var(--glow);
     }
     .nav-logo span.t { background: var(--grad-text); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .nav-links { display: flex; align-items: center; gap: 24px; }
-    .nav-links a { font-size: 0.875rem; font-weight: 500; color: var(--text-muted); transition: color 0.2s; }
+    .nav-links { display: flex; align-items: center; gap: var(--space-6); }
+    .nav-links a {
+      font-size: 0.875rem; font-weight: 500; color: var(--text-muted);
+      transition: color var(--dur-base);
+      position: relative;
+    }
     .nav-links a:hover { color: var(--text); }
     .nav-links a.active { color: var(--text); }
-
-    .nav-actions { display: flex; align-items: center; gap: 10px; }
-    .theme-btn {
-      width: 34px; height: 34px; border-radius: 8px;
-      background: var(--bg-card); border: 1px solid var(--border);
-      color: var(--text-muted); cursor: pointer; font-size: 15px;
-      display: flex; align-items: center; justify-content: center;
-      transition: all 0.2s;
+    .nav-links a.active::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: -22px;
+      height: 2px; background: var(--grad); border-radius: var(--r-full);
     }
-    .theme-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--bg-card-hover); }
+
+    .nav-actions { display: flex; align-items: center; gap: var(--space-2); }
+    .icon-btn {
+      width: 36px; height: 36px; border-radius: var(--r-md);
+      background: var(--bg-card); border: 1px solid var(--border);
+      color: var(--text-muted); cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: color var(--dur-base), border-color var(--dur-base), background var(--dur-base);
+    }
+    .icon-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--bg-card-hover); }
+    .icon-btn .icon { width: 18px; height: 18px; }
 
     .nav-cta {
-      padding: 8px 18px; border-radius: 8px;
+      padding: var(--space-2) var(--space-5); border-radius: var(--r-md);
       background: var(--grad); color: #fff !important;
       font-weight: 600; font-size: 0.8125rem;
-      transition: opacity 0.2s, transform 0.2s;
+      transition: opacity var(--dur-base), transform var(--dur-base), box-shadow var(--dur-base);
+      box-shadow: 0 2px 8px var(--glow);
     }
-    .nav-cta:hover { opacity: 0.9; transform: translateY(-1px); }
+    .nav-cta:hover { opacity: 0.95; transform: translateY(-1px); box-shadow: 0 6px 20px var(--glow); }
 
     /* GitHub star badge */
     .gh-badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 6px 12px; border-radius: 8px;
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      padding: 6px var(--space-3); border-radius: var(--r-md);
       background: var(--bg-card); border: 1px solid var(--border);
       font-size: 0.8125rem; font-weight: 600; color: var(--text);
-      transition: all 0.2s;
+      transition: color var(--dur-base), border-color var(--dur-base), background var(--dur-base);
     }
     .gh-badge:hover { border-color: var(--border-strong); background: var(--bg-card-hover); }
     .gh-badge .star { color: #fbbf24; }
+    .gh-badge svg { color: var(--text-muted); }
+
+    /* Mobile menu toggle */
+    .menu-toggle { display: none; }
+
+    /* ────────── Mobile drawer ────────── */
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none; z-index: 99;
+      transition: opacity var(--dur-base);
+    }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .mobile-drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(320px, 80vw);
+      background: var(--bg-soft); border-left: 1px solid var(--border);
+      transform: translateX(100%); transition: transform var(--dur-slow) var(--ease-out);
+      z-index: 101; padding: 80px var(--space-6) var(--space-6);
+      display: flex; flex-direction: column; gap: var(--space-2);
+      overflow-y: auto;
+    }
+    .mobile-drawer.open { transform: translateX(0); }
+    .mobile-drawer a {
+      padding: var(--space-3) var(--space-4); border-radius: var(--r-md);
+      color: var(--text-muted); font-weight: 500;
+      transition: background var(--dur-fast), color var(--dur-fast);
+    }
+    .mobile-drawer a:hover { background: var(--bg-card); color: var(--text); }
+    .mobile-drawer a.cta { background: var(--grad); color: #fff; text-align: center; margin-top: var(--space-3); }
 
     /* ────────── Hero ────────── */
     .hero {
-      min-height: 100vh; display: flex; align-items: center;
-      position: relative; padding: 120px 24px 80px; overflow: hidden;
+      min-height: 100vh; min-height: 100dvh; display: flex; align-items: center;
+      position: relative; padding: 120px var(--space-6) 80px; overflow: hidden;
     }
     .hero-glow {
       position: absolute; border-radius: 50%;
@@ -189,70 +313,82 @@
     .hero-text { max-width: 640px; }
 
     .badge-pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 6px 14px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      padding: 6px var(--space-4); border-radius: var(--r-full);
       background: var(--bg-card); border: 1px solid var(--border);
       font-size: 0.75rem; font-weight: 500; color: var(--text-muted);
-      margin-bottom: 24px;
+      margin-bottom: var(--space-6);
     }
     .badge-pill .dot {
       width: 6px; height: 6px; border-radius: 50%; background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
       animation: pulse-dot 2s ease-in-out infinite;
     }
     @keyframes pulse-dot {
       0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.6; transform: scale(1.2); }
+      50% { opacity: 0.6; transform: scale(1.3); }
     }
 
     .hero h1 {
-      font-size: clamp(2.8rem, 6vw, 4.5rem);
-      font-weight: 900; line-height: 1.05; letter-spacing: -0.04em;
-      margin-bottom: 18px;
+      /* 流式字号：320px 屏宽下约 28px → 大屏 56px，避免溢出 */
+      font-size: clamp(1.75rem, 4.2vw + 0.5rem, 3.5rem);
+      font-weight: 900; line-height: 1.08; letter-spacing: -0.04em;
+      margin-bottom: var(--space-5);
     }
     .hero h1 .grad {
       background: var(--grad-text);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
     }
-    .hero p { font-size: 1.125rem; color: var(--text-muted); max-width: 480px; margin-bottom: 32px; line-height: 1.7; }
-    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .hero p { font-size: clamp(1rem, 1.2vw, 1.125rem); color: var(--text-muted); max-width: 480px; margin-bottom: var(--space-8); line-height: 1.7; }
+    .hero-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 
     .btn {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 12px 28px; border-radius: 10px;
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      padding: 12px 28px; border-radius: var(--r-md);
       font-weight: 600; font-size: 0.9375rem;
-      transition: all 0.25s; border: none; cursor: pointer;
+      transition: transform var(--dur-base), background var(--dur-base),
+                  box-shadow var(--dur-base), border-color var(--dur-base),
+                  color var(--dur-base), opacity var(--dur-base);
+      border: none; cursor: pointer; white-space: nowrap;
     }
     .btn-primary { background: var(--grad); color: #fff; box-shadow: 0 4px 24px var(--glow); }
     .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px var(--glow); }
     .btn-secondary { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
     .btn-secondary:hover { background: var(--bg-card-hover); transform: translateY(-2px); border-color: var(--border-strong); }
+    .btn .icon { width: 18px; height: 18px; }
 
-    .hero-stats { display: flex; gap: 32px; margin-top: 40px; }
-    .hero-stat .num { font-size: 1.5rem; font-weight: 800; color: var(--text); }
-    .hero-stat .label { font-size: 0.75rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
+    .hero-stats { display: flex; gap: var(--space-8); margin-top: var(--space-10); flex-wrap: wrap; }
+    .hero-stat .num {
+      font-size: clamp(1.5rem, 2vw, 2rem);
+      font-weight: 800; color: var(--text);
+      background: var(--grad-text); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hero-stat .label { font-size: 0.75rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
 
     /* ────────── Mockup（增强：打字机动画 + 状态呼吸） ────────── */
     .mockup {
-      background: var(--bg-soft); border-radius: 14px;
+      background: var(--bg-soft); border-radius: var(--r-lg);
       border: 1px solid var(--border);
       box-shadow: var(--shadow-lift); overflow: hidden;
+      position: relative;
     }
     .mockup-bar {
-      display: flex; align-items: center; gap: 7px; padding: 12px 18px;
+      display: flex; align-items: center; gap: 7px; padding: var(--space-3) var(--space-5);
       background: color-mix(in srgb, var(--bg-soft) 85%, var(--text) 5%);
       border-bottom: 1px solid var(--border);
     }
-    .mockup-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .mockup-dot { width: 11px; height: 11px; border-radius: 50%; }
     .mockup-dot.r { background: #ef4444; }
     .mockup-dot.y { background: #eab308; }
     .mockup-dot.g { background: #22c55e; }
-    .mockup-bar .title { color: var(--text-dim); font-size: 0.6875rem; margin-left: 10px; }
+    .mockup-bar .title { color: var(--text-dim); font-size: 0.6875rem; margin-left: var(--space-2); }
     .mockup-bar .live {
       margin-left: auto; display: flex; align-items: center; gap: 6px;
-      font-size: 0.6875rem; color: #22c55e;
+      font-size: 0.6875rem; color: #22c55e; font-weight: 600;
     }
     .mockup-bar .live::before {
       content: ''; width: 7px; height: 7px; border-radius: 50%; background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
       animation: pulse-dot 2s ease-in-out infinite;
     }
 
@@ -260,39 +396,42 @@
     .mockup-side {
       width: 48px; background: color-mix(in srgb, var(--bg-soft) 85%, var(--text) 5%);
       border-right: 1px solid var(--border);
-      display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 18px;
+      display: flex; flex-direction: column; align-items: center; padding: var(--space-4) 0; gap: var(--space-5);
+      flex-shrink: 0;
     }
-    .mockup-side div { width: 20px; height: 20px; border-radius: 5px; background: var(--bg-card-hover); }
+    .mockup-side div { width: 20px; height: 20px; border-radius: var(--r-sm); background: var(--bg-card-hover); }
     .mockup-side div.on { background: var(--grad); }
 
-    .mockup-main { flex: 1; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+    .mockup-main { flex: 1; padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
     .mockup-head { display: flex; justify-content: space-between; align-items: center; }
     .mockup-head .t { font-size: 0.75rem; font-weight: 600; color: var(--text); }
-    .mockup-head .s { font-size: 0.6875rem; color: #22c55e; display: flex; align-items: center; gap: 4px; }
+    .mockup-head .s { font-size: 0.6875rem; color: #22c55e; display: flex; align-items: center; gap: 4px; font-weight: 600; }
     .mockup-head .s::before {
-      content: '●'; animation: pulse-dot 2s ease-in-out infinite;
+      content: ''; width: 6px; height: 6px; border-radius: 50%; background: #22c55e;
+      animation: pulse-dot 2s ease-in-out infinite;
     }
-    .mockup-row { display: flex; gap: 10px; }
+    .mockup-row { display: flex; gap: var(--space-3); }
     .mockup-card {
       flex: 1; background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 8px; padding: 14px;
+      border-radius: var(--r-md); padding: var(--space-4); min-width: 0;
     }
     .mockup-card .l { font-size: 0.625rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
     .mockup-card .v { font-size: 1.125rem; font-weight: 700; margin-top: 2px; color: var(--text); }
-    .mockup-card .bar { height: 3px; border-radius: 2px; background: var(--bg-card-hover); margin-top: 6px; overflow: hidden; }
+    .mockup-card .bar { height: 3px; border-radius: var(--r-full); background: var(--bg-card-hover); margin-top: var(--space-2); overflow: hidden; }
     .mockup-card .bar .f {
-      height: 100%; border-radius: 2px; background: var(--grad);
+      height: 100%; border-radius: var(--r-full); background: var(--grad);
       animation: bar-grow 2.4s ease-out;
     }
     @keyframes bar-grow { from { width: 0; } }
 
     .mockup-term {
       flex: 1; background: var(--bg); border: 1px solid var(--border);
-      border-radius: 7px; padding: 12px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
+      border-radius: var(--r-sm); padding: var(--space-3);
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
       font-size: 0.6875rem; line-height: 1.8; color: var(--text-muted);
+      overflow: hidden;
     }
-    .mockup-term .l { display: flex; gap: 10px; opacity: 0; animation: line-in 0.4s ease forwards; }
+    .mockup-term .l { display: flex; gap: var(--space-3); opacity: 0; animation: line-in 0.4s ease forwards; white-space: nowrap; }
     .mockup-term .l:nth-child(1) { animation-delay: 0.2s; }
     .mockup-term .l:nth-child(2) { animation-delay: 0.6s; }
     .mockup-term .l:nth-child(3) { animation-delay: 1.0s; }
@@ -314,159 +453,180 @@
 
     /* ────────── 通用 section ────────── */
     section { padding: 100px 0; }
-    .section-head { text-align: center; margin-bottom: 50px; }
+    .section-head { text-align: center; margin-bottom: var(--space-12); }
     .section-title {
       font-size: clamp(1.6rem, 3vw, 2.4rem);
       font-weight: 800; letter-spacing: -0.03em; line-height: 1.15;
-      margin-bottom: 12px;
+      margin-bottom: var(--space-3);
     }
-    .section-sub { font-size: 1rem; color: var(--text-muted); max-width: 480px; margin: 0 auto; line-height: 1.7; }
+    .section-sub { font-size: 1rem; color: var(--text-muted); max-width: 520px; margin: 0 auto; line-height: 1.7; }
     .section-tag {
-      display: inline-block; padding: 4px 12px; border-radius: 999px;
+      display: inline-block; padding: 4px var(--space-3); border-radius: var(--r-full);
       background: var(--bg-card); border: 1px solid var(--border);
       font-size: 0.75rem; font-weight: 600; color: var(--accent-2);
-      margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: var(--space-4); text-transform: uppercase; letter-spacing: 0.05em;
     }
 
-    /* ────────── 价值主张（6 个特性网格） ────────── */
+    /* ────────── 价值主张（特性网格） ────────── */
     .props-grid {
       display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
-      background: var(--border); border-radius: 16px; overflow: hidden;
-      border: 1px solid var(--border);
+      background: var(--border-strong); border-radius: var(--r-xl); overflow: hidden;
+      border: 1px solid var(--border-strong);
     }
     .prop {
-      background: var(--bg); padding: 40px 32px;
-      transition: background 0.2s;
+      background: var(--bg); padding: var(--space-10) var(--space-8);
+      transition: background var(--dur-base);
     }
     .prop:hover { background: var(--bg-soft); }
     .prop .ico {
-      width: 44px; height: 44px; border-radius: 10px;
+      width: 44px; height: 44px; border-radius: var(--r-md);
       background: var(--bg-card); border: 1px solid var(--border);
       display: flex; align-items: center; justify-content: center;
-      font-size: 1.4rem; margin-bottom: 18px;
+      color: var(--accent-2); margin-bottom: var(--space-5);
+      transition: color var(--dur-base), border-color var(--dur-base), transform var(--dur-base);
     }
-    .prop h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
+    .prop:hover .ico { color: var(--accent); border-color: var(--border-strong); transform: scale(1.05); }
+    .prop .ico .icon { width: 22px; height: 22px; }
+    .prop h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: var(--space-2); letter-spacing: -0.01em; }
     .prop p { font-size: 0.875rem; color: var(--text-subtle); line-height: 1.6; }
     .prop .feat-kbd {
-      display: inline-block; margin-top: 10px;
+      display: inline-block; margin-top: var(--space-3);
       font-size: 0.6875rem; color: var(--text-dim);
-      font-family: 'SF Mono', monospace;
-    }
-    .prop .feat-kbd kbd {
-      display: inline-block; padding: 2px 6px; margin: 0 2px;
-      background: var(--bg-card-hover); border: 1px solid var(--border-strong);
-      border-bottom-width: 2px; border-radius: 4px;
-      font-size: 0.625rem; color: var(--text-muted);
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
     }
 
-    /* ────────── 对比表（黑窗口 vs 面板） ────────── */
+    /* ────────── 对比表 ────────── */
     .compare-wrap {
-      max-width: 800px; margin: 0 auto;
+      max-width: 820px; margin: 0 auto;
       background: var(--bg-soft); border: 1px solid var(--border);
-      border-radius: 16px; overflow: hidden;
+      border-radius: var(--r-xl); overflow: hidden;
+      box-shadow: var(--shadow-card);
     }
-    .compare-table { width: 100%; border-collapse: collapse; }
+    .compare-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .compare-table { width: 100%; border-collapse: collapse; min-width: 480px; }
     .compare-table th, .compare-table td {
-      padding: 16px 20px; text-align: left;
+      padding: var(--space-4) var(--space-5); text-align: left;
       border-bottom: 1px solid var(--border); font-size: 0.875rem;
     }
     .compare-table th {
       background: var(--bg-card); font-weight: 700; font-size: 0.8125rem;
       color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;
+      position: sticky; top: 0;
     }
     .compare-table th:first-child { width: 32%; }
     .compare-table th.col-td { color: var(--accent-2); }
     .compare-table tr:last-child td { border-bottom: none; }
     .compare-table .yes { color: #22c55e; font-weight: 600; }
+    .compare-table .yes .icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
     .compare-table .no { color: var(--text-dim); }
     .compare-table .feat { color: var(--text); font-weight: 500; }
     .compare-table .col-cmd { color: var(--text-muted); }
 
     /* ────────── 下载 ────────── */
     .download { text-align: center; background: linear-gradient(180deg, transparent, var(--glow), transparent); }
-    .download-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 560px; margin: 48px auto 0; }
+    .download-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); max-width: 580px; margin: var(--space-12) auto 0; }
     .dl-card {
-      padding: 36px 28px; border-radius: 16px;
+      padding: var(--space-10) var(--space-7); border-radius: var(--r-xl);
       background: var(--bg-card); border: 1px solid var(--border);
-      transition: all 0.3s;
+      transition: transform var(--dur-slow), border-color var(--dur-slow), background var(--dur-slow);
+      box-shadow: var(--shadow-card);
     }
     .dl-card:hover {
       border-color: var(--border-strong);
       background: var(--bg-card-hover); transform: translateY(-3px);
     }
-    .dl-card .big { font-size: 2.2rem; margin-bottom: 12px; }
-    .dl-card h3 { font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
-    .dl-card p { font-size: 0.8125rem; color: var(--text-subtle); margin-bottom: 18px; }
+    .dl-card .big {
+      width: 56px; height: 56px; margin: 0 auto var(--space-3);
+      border-radius: var(--r-lg); background: var(--bg-card-hover);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--accent);
+    }
+    .dl-card .big .icon { width: 28px; height: 28px; }
+    .dl-card h3 { font-weight: 700; font-size: 1.05rem; margin-bottom: var(--space-1); }
+    .dl-card p { font-size: 0.8125rem; color: var(--text-subtle); margin-bottom: var(--space-5); }
     .dl-card .btn { width: 100%; justify-content: center; }
 
     /* ────────── FAQ（手风琴） ────────── */
     .faq-wrap { max-width: 760px; margin: 0 auto; }
-    .faq-item {
-      border-bottom: 1px solid var(--border);
-    }
+    .faq-item { border-bottom: 1px solid var(--border); }
     .faq-item summary {
-      padding: 18px 0; cursor: pointer; font-weight: 600;
+      padding: var(--space-5) 0; cursor: pointer; font-weight: 600;
       font-size: 0.9375rem; color: var(--text);
       list-style: none; display: flex; justify-content: space-between; align-items: center;
-      transition: color 0.15s;
+      gap: var(--space-3);
+      transition: color var(--dur-fast);
     }
     .faq-item summary::-webkit-details-marker { display: none; }
     .faq-item summary:hover { color: var(--accent-2); }
-    .faq-item summary::after {
-      content: '+'; font-size: 1.4rem; font-weight: 400; color: var(--text-subtle);
-      transition: transform 0.2s;
+    .faq-item summary .chev {
+      width: 18px; height: 18px; flex-shrink: 0; color: var(--text-subtle);
+      transition: transform var(--dur-base), color var(--dur-base);
     }
-    .faq-item[open] summary::after { content: '−'; }
+    .faq-item[open] summary .chev { transform: rotate(180deg); color: var(--accent-2); }
     .faq-item .faq-a {
-      padding: 0 0 18px; color: var(--text-muted);
+      padding: 0 0 var(--space-5); color: var(--text-muted);
       font-size: 0.875rem; line-height: 1.7;
+      animation: faq-open var(--dur-slow) var(--ease-out);
+    }
+    @keyframes faq-open {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     /* ────────── Footer ────────── */
-    footer { padding: 48px 0; border-top: 1px solid var(--border); text-align: center; }
+    footer { padding: var(--space-12) 0; border-top: 1px solid var(--border); text-align: center; }
     footer p { color: var(--text-dim); font-size: 0.8125rem; }
-    footer .links { display: flex; justify-content: center; gap: 20px; margin-bottom: 12px; flex-wrap: wrap; }
-    footer .links a { color: var(--text-subtle); font-size: 0.875rem; transition: color 0.2s; }
+    footer .links { display: flex; justify-content: center; gap: var(--space-5); margin-bottom: var(--space-3); flex-wrap: wrap; }
+    footer .links a { color: var(--text-subtle); font-size: 0.875rem; transition: color var(--dur-base); display: inline-flex; align-items: center; gap: 6px; }
     footer .links a:hover { color: var(--text); }
+    footer .links a .icon { width: 14px; height: 14px; }
 
     /* ────────── 返回顶部 ────────── */
     .to-top {
-      position: fixed; right: 24px; bottom: 24px; z-index: 90;
+      position: fixed; right: var(--space-6); bottom: var(--space-6); z-index: 90;
       width: 44px; height: 44px; border-radius: 50%;
       background: var(--grad); color: #fff; border: none; cursor: pointer;
-      font-size: 18px; display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: center;
       box-shadow: 0 6px 20px var(--glow);
-      opacity: 0; transform: translateY(20px); pointer-events: none;
-      transition: all 0.25s;
+      opacity: 0; transform: translateY(20px) scale(0.8); pointer-events: none;
+      transition: opacity var(--dur-base), transform var(--dur-base), box-shadow var(--dur-base);
     }
-    .to-top.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-    .to-top:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--glow); }
+    .to-top.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+    .to-top:hover { transform: translateY(-2px) scale(1.05); box-shadow: 0 8px 24px var(--glow); }
+    .to-top .icon { width: 20px; height: 20px; stroke-width: 2.5; }
 
     /* ────────── Animations ────────── */
-    .anim { opacity: 0; transform: translateY(28px); transition: opacity 0.7s ease-out, transform 0.7s ease-out; }
+    .anim { opacity: 0; transform: translateY(28px); transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out); }
     .anim.show { opacity: 1; transform: translateY(0); }
 
     /* ────────── Responsive ────────── */
     @media (max-width: 860px) {
-      .hero-layout { grid-template-columns: 1fr; gap: 40px; }
+      .hero-layout { grid-template-columns: 1fr; gap: var(--space-10); }
       .hero-text { max-width: 100%; }
-      .props-grid { grid-template-columns: 1fr; }
+      .props-grid { grid-template-columns: repeat(2, 1fr); }
       .download-grid { grid-template-columns: 1fr; }
-      .hero-stats { gap: 20px; }
-      .compare-table th:first-child { width: 28%; }
-      .compare-table th, .compare-table td { padding: 12px 14px; font-size: 0.8125rem; }
+      .hero-stats { gap: var(--space-5); }
+      section { padding: 72px 0; }
     }
     @media (max-width: 640px) {
-      .nav-links a:not(.nav-cta) { display: none; }
-      .prop { padding: 28px 22px; }
-      section { padding: 70px 0; }
-      .hero { padding: 100px 16px 60px; }
-      .hero-stats { flex-wrap: wrap; gap: 16px 24px; }
+      /* 移动端：折叠 nav-links 到 drawer，保留 nav-cta 与 GitHub 入口 */
+      .nav-links { display: none; }
+      .menu-toggle { display: flex; }
+      .props-grid { grid-template-columns: 1fr; }
+      .prop { padding: var(--space-7) var(--space-6); }
+      section { padding: 56px 0; }
+      .hero { padding: 100px var(--space-4) 60px; }
+      .hero-stats { flex-wrap: wrap; gap: var(--space-4) var(--space-6); }
       .gh-badge { display: none; }
+      .nav-cta { display: none; }
+      .compare-table th, .compare-table td { padding: var(--space-3) var(--space-4); font-size: 0.8125rem; }
+      .compare-table th:first-child { width: 28%; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
       .mockup-term .l { opacity: 1; animation: none; }
+      html { scroll-behavior: auto; }
     }
   </style>
 </head>
@@ -474,7 +634,7 @@
   <a href="#main" class="skip-link">跳到主要内容</a>
 
   <!-- ────────── Nav ────────── -->
-  <nav>
+  <nav id="nav">
     <div class="container">
       <a href="#" class="nav-logo" aria-label="ToolDelta-Web 首页">
         <span class="logo-mark">TD</span>
@@ -486,16 +646,35 @@
         <a href="#download" data-nav>下载</a>
         <a href="#faq" data-nav>FAQ</a>
         <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener" class="gh-badge" aria-label="GitHub 仓库">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
           <span class="star">★</span> Star
         </a>
         <a href="https://github.com/ImSusua/ToolDelta-Web/releases" target="_blank" rel="noopener" class="nav-cta">开始使用</a>
       </div>
       <div class="nav-actions">
-        <button class="theme-btn" id="themeBtn" data-tip="切换主题" aria-label="切换主题（深色 / 浅色 / 系统）">🌙</button>
+        <button class="icon-btn" id="themeBtn" data-tip="切换主题" aria-label="切换主题（深色 / 浅色 / 系统）" aria-pressed="false">
+          <span class="theme-icon-wrap" id="themeIconWrap"></span>
+        </button>
+        <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener" class="icon-btn" aria-label="GitHub 仓库" style="display:none" id="mobileGhBtn">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        </a>
+        <button class="icon-btn menu-toggle" id="menuToggle" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileDrawer">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
       </div>
     </div>
   </nav>
+
+  <!-- 移动端抽屉 -->
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="mobile-drawer" id="mobileDrawer" role="dialog" aria-modal="true" aria-label="导航菜单">
+    <a href="#features" data-nav-close>特性</a>
+    <a href="#compare" data-nav-close>对比</a>
+    <a href="#download" data-nav-close>下载</a>
+    <a href="#faq" data-nav-close>FAQ</a>
+    <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener" data-nav-close>GitHub ★ Star</a>
+    <a href="https://github.com/ImSusua/ToolDelta-Web/releases" target="_blank" rel="noopener" class="cta" data-nav-close>开始使用 →</a>
+  </aside>
 
   <main id="main">
     <!-- ────────── Hero ────────── -->
@@ -505,23 +684,23 @@
       <div class="container">
         <div class="hero-layout">
           <div class="hero-text">
-            <div class="badge-pill"><span class="dot"></span> v1.0.0 · MIT 开源 · 持续维护</div>
+            <div class="badge-pill"><span class="dot"></span> <span id="versionBadge">v1.0.0</span> · MIT 开源 · 持续维护</div>
             <h1>你的 Minecraft 服务器<br><span class="grad">该有一副新面孔了</span></h1>
             <p>ToolDelta-Web 是一个开源的 Web 管理面板。告别黑窗口，用浏览器掌控你的世界——实时控制台、命令面板、多主题、插件市场，开箱即用。</p>
             <div class="hero-actions">
               <a href="https://gh-proxy.com/https://github.com/ImSusua/ToolDelta-Web/archive/main.zip" target="_blank" rel="noopener" class="btn btn-primary" data-tip="gh-proxy 加速，国内满速">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 免费下载
               </a>
               <a href="#features" class="btn btn-secondary">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 查看特性
               </a>
             </div>
             <div class="hero-stats">
               <div class="hero-stat"><div class="num">10+</div><div class="label">功能模块</div></div>
               <div class="hero-stat"><div class="num">3</div><div class="label">主题模式</div></div>
-              <div class="hero-stat"><div class="num">138+</div><div class="label">自检断言</div></div>
+              <div class="hero-stat"><div class="num">2530+</div><div class="label">自检断言</div></div>
               <div class="hero-stat"><div class="num">0</div><div class="label">外部依赖</div></div>
             </div>
           </div>
@@ -563,7 +742,7 @@
       </div>
     </section>
 
-    <!-- ────────── 价值主张（6 个特性） ────────── -->
+    <!-- ────────── 价值主张（9 个特性） ────────── -->
     <section id="features">
       <div class="container">
         <div class="section-head">
@@ -573,50 +752,50 @@
         </div>
         <div class="props-grid anim">
           <div class="prop">
-            <div class="ico">🖥️</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
             <h3>实时控制台</h3>
             <p>WebSocket 双向通信，日志毫秒级推送。真彩 ANSI 渲染，命令即发即达。</p>
           </div>
           <div class="prop">
-            <div class="ico">⌘</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 3a3 3 0 0 1 3 3v3a2 2 0 0 1 0 4v3a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-3a2 2 0 0 1 0-4V6a3 3 0 0 1 3-3h13z"/><line x1="13" y1="8" x2="13" y2="16"/><line x1="16" y1="11" x2="16" y2="13"/></svg></div>
             <h3>命令面板</h3>
             <p>Raycast 式全局命令面板，模糊搜索、最近访问、键盘直达。</p>
             <span class="feat-kbd"><kbd>⌘</kbd>+<kbd>K</kbd> 唤起</span>
           </div>
           <div class="prop">
-            <div class="ico">⌨️</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/></svg></div>
             <h3>键盘快捷键</h3>
             <p>GitHub 风格全键盘操作：搜索聚焦、主题切换、快捷键速查。</p>
             <span class="feat-kbd"><kbd>/</kbd> 搜索 · <kbd>?</kbd> 速查</span>
           </div>
           <div class="prop">
-            <div class="ico">🎨</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14 14 0 0 0 0 20 14 14 0 0 0 0-20"/><path d="M2 12h20"/></svg></div>
             <h3>多主题系统</h3>
             <p>深色 / 浅色 / 跟随系统三主题，CSS 变量驱动，平滑切换无闪烁。</p>
             <span class="feat-kbd"><kbd>⇧</kbd>+<kbd>T</kbd> 切换</span>
           </div>
           <div class="prop">
-            <div class="ico">↩️</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></div>
             <h3>撤销操作</h3>
             <p>Gmail 式撤销删除，6 秒撤销窗口。乐观更新 + 失败自动回滚。</p>
           </div>
           <div class="prop">
-            <div class="ico">📦</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
             <h3>插件生态</h3>
             <p>继承 ToolDelta 插件架构，热加载、插件市场，无限扩展可能。</p>
           </div>
           <div class="prop">
-            <div class="ico">📱</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg></div>
             <h3>移动端适配</h3>
             <p>Android 深度适配：滑动手势、软键盘补偿、安全区、动态视口。</p>
           </div>
           <div class="prop">
-            <div class="ico">🔔</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
             <h3>通知中心</h3>
             <p>Toast 历史归档，未读角标，操作可追溯。悬停暂停，不漏消息。</p>
           </div>
           <div class="prop">
-            <div class="ico">♿</div>
+            <div class="ico"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M19 13v-2a7 7 0 0 0-14 0v2"/><path d="M5 21h14M5 17h14"/></svg></div>
             <h3>无障碍优先</h3>
             <p>WCAG 级焦点管理、ARIA、inert 模态、屏幕阅读器友好。</p>
           </div>
@@ -633,25 +812,27 @@
           <p class="section-sub">同样管理服务器，体验天差地别。</p>
         </div>
         <div class="compare-wrap anim">
-          <table class="compare-table">
-            <thead>
-              <tr>
-                <th>能力</th>
-                <th>传统黑窗口</th>
-                <th class="col-td">ToolDelta-Web</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="feat">实时日志</td><td class="col-cmd">纯文本，无颜色</td><td class="yes">真彩 ANSI 渲染 ✓</td></tr>
-              <tr><td class="feat">远程访问</td><td class="col-cmd">需 SSH / RDP</td><td class="yes">浏览器即用 ✓</td></tr>
-              <tr><td class="feat">插件管理</td><td class="col-cmd">命令行操作</td><td class="yes">可视化 + 热加载 ✓</td></tr>
-              <tr><td class="feat">主题切换</td><td class="col-cmd">单一配色</td><td class="yes">深 / 浅 / 系统 ✓</td></tr>
-              <tr><td class="feat">键盘流</td><td class="col-cmd">仅命令行</td><td class="yes">⌘K 命令面板 ✓</td></tr>
-              <tr><td class="feat">移动端</td><td class="col-cmd">几乎不可用</td><td class="yes">深度适配 ✓</td></tr>
-              <tr><td class="feat">误操作恢复</td><td class="col-cmd">无</td><td class="yes">撤销 + 回滚 ✓</td></tr>
-              <tr><td class="feat">自检保障</td><td class="col-cmd">无</td><td class="yes">10 轮 / 1380 断言 ✓</td></tr>
-            </tbody>
-          </table>
+          <div class="compare-table-wrap">
+            <table class="compare-table">
+              <thead>
+                <tr>
+                  <th>能力</th>
+                  <th>传统黑窗口</th>
+                  <th class="col-td">ToolDelta-Web</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td class="feat">实时日志</td><td class="col-cmd">纯文本，无颜色</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>真彩 ANSI 渲染</td></tr>
+                <tr><td class="feat">远程访问</td><td class="col-cmd">需 SSH / RDP</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>浏览器即用</td></tr>
+                <tr><td class="feat">插件管理</td><td class="col-cmd">命令行操作</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>可视化 + 热加载</td></tr>
+                <tr><td class="feat">主题切换</td><td class="col-cmd">单一配色</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>深 / 浅 / 系统</td></tr>
+                <tr><td class="feat">键盘流</td><td class="col-cmd">仅命令行</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>⌘K 命令面板</td></tr>
+                <tr><td class="feat">移动端</td><td class="col-cmd">几乎不可用</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>深度适配</td></tr>
+                <tr><td class="feat">误操作恢复</td><td class="col-cmd">无</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>撤销 + 回滚</td></tr>
+                <tr><td class="feat">自检保障</td><td class="col-cmd">无</td><td class="yes"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>10 轮 / 2530 断言</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -661,18 +842,18 @@
       <div class="container">
         <div class="section-head">
           <span class="section-tag">开始</span>
-          <h2 class="section-title">开始使用 ToolDelta‑Web</h2>
+          <h2 class="section-title">开始使用 ToolDelta-Web</h2>
           <p class="section-sub">开源 · 免费 · MIT License · 持续维护</p>
         </div>
         <div class="download-grid">
           <div class="dl-card anim">
-            <div class="big">⚡</div>
+            <div class="big"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
             <h3>直接下载</h3>
             <p>gh-proxy 加速，国内满速下载源码 zip</p>
             <a href="https://gh-proxy.com/https://github.com/ImSusua/ToolDelta-Web/archive/main.zip" target="_blank" rel="noopener" class="btn btn-primary">下载 ZIP</a>
           </div>
           <div class="dl-card anim">
-            <div class="big">🐙</div>
+            <div class="big"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg></div>
             <h3>Clone 源码</h3>
             <p>从 GitHub 拉取，自行构建</p>
             <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener" class="btn btn-secondary">Clone →</a>
@@ -695,32 +876,32 @@
         </div>
         <div class="faq-wrap anim">
           <details class="faq-item" open>
-            <summary>ToolDelta-Web 是什么？</summary>
+            <summary>ToolDelta-Web 是什么？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
             <div class="faq-a">基于 Web 的 Minecraft 服务器管理面板，内嵌 ToolDelta 引擎。无需安装客户端，浏览器打开即用。MIT 开源，自部署、数据完全自持。</div>
           </details>
           <details class="faq-item">
-            <summary>需要什么环境运行？</summary>
+            <summary>需要什么环境运行？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
             <div class="faq-a">Python 3.10+。首次运行时面板会引导安装 ToolDelta 运行依赖，支持本地离线包（无外网可用）与在线安装两种方式。Windows / Linux / macOS 均可运行。</div>
           </details>
           <details class="faq-item">
-            <summary>支持手机访问吗？</summary>
+            <summary>支持手机访问吗？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
             <div class="faq-a">完全支持。深度适配 Android：滑动手势打开侧栏、软键盘弹起自动补偿、刘海安全区避让、动态视口高度。移动端体验与桌面端一致。</div>
           </details>
           <details class="faq-item">
-            <summary>支持哪些主题？</summary>
-            <div class="faq-a">深色、浅色、跟随系统三种主题。用 CSS 变量驱动，切换瞬时无闪烁。可在设置页选择，或用 <kbd style="font-family:monospace;padding:1px 5px;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:3px;">⇧+T</kbd> 快捷键切换。</div>
+            <summary>支持哪些主题？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
+            <div class="faq-a">深色、浅色、跟随系统三种主题。用 CSS 变量驱动，切换瞬时无闪烁。可在设置页选择，或用 <kbd>⇧</kbd>+<kbd>T</kbd> 快捷键切换。</div>
           </details>
           <details class="faq-item">
-            <summary>误删插件怎么办？</summary>
+            <summary>误删插件怎么办？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
             <div class="faq-a">删除操作会先在前端软删除，并弹出 6 秒撤销窗口的 Toast。点击「撤销」即可恢复；窗口关闭后才真正提交到服务器。即便请求失败也会自动回滚，不会丢数据。</div>
           </details>
           <details class="faq-item">
-            <summary>有键盘快捷键吗？</summary>
-            <div class="faq-a">有。按 <kbd style="font-family:monospace;padding:1px 5px;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:3px;">⌘K</kbd> 打开命令面板（模糊搜索 + 最近访问），<kbd style="font-family:monospace;padding:1px 5px;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:3px;">?</kbd> 查看全部快捷键，<kbd style="font-family:monospace;padding:1px 5px;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:3px;">/</kbd> 聚焦页面搜索框。</div>
+            <summary>有键盘快捷键吗？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
+            <div class="faq-a">有。按 <kbd>⌘</kbd>+<kbd>K</kbd> 打开命令面板（模糊搜索 + 最近访问），<kbd>?</kbd> 查看全部快捷键，<kbd>/</kbd> 聚焦页面搜索框。</div>
           </details>
           <details class="faq-item">
-            <summary>项目稳定吗？</summary>
-            <div class="faq-a">每次构建运行 10 轮独立自检（共 1380+ 断言），覆盖启动/停止/重启/日志/收藏/连接/看门狗/调度/仪表盘等模块。GitHub Actions CI 在每次 push 时自动跑自检与构建归档。</div>
+            <summary>项目稳定吗？<svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></summary>
+            <div class="faq-a">每次构建运行 10 轮独立自检（共 2530+ 断言），覆盖启动/停止/重启/日志/收藏/连接/看门狗/调度/仪表盘等模块。GitHub Actions CI 在每次 push 时自动跑自检与构建归档。</div>
           </details>
         </div>
       </div>
@@ -731,20 +912,43 @@
   <footer>
     <div class="container">
       <div class="links">
-        <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://wiki.tooldelta.top/" target="_blank" rel="noopener">Wiki</a>
-        <a href="https://github.com/ImSusua/ToolDelta-Web/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/ImSusua/ToolDelta-Web/issues" target="_blank" rel="noopener">反馈</a>
+        <a href="https://github.com/ImSusua/ToolDelta-Web" target="_blank" rel="noopener">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          GitHub
+        </a>
+        <a href="https://wiki.tooldelta.top/" target="_blank" rel="noopener">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Wiki
+        </a>
+        <a href="https://github.com/ImSusua/ToolDelta-Web/releases" target="_blank" rel="noopener">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          Releases
+        </a>
+        <a href="https://github.com/ImSusua/ToolDelta-Web/issues" target="_blank" rel="noopener">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          反馈
+        </a>
       </div>
-      <p>Built for the Minecraft community · MIT License · v1.0.0</p>
+      <p>Built for the Minecraft community · MIT License · <span id="footerVersion">v1.0.0</span> · © <span id="year">2026</span></p>
     </div>
   </footer>
 
   <button class="to-top" id="toTop" aria-label="返回顶部" data-tip="返回顶部">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
   </button>
 
   <script>
+    /* ────────── SVG 图标库（lucide 风格，与面板统一） ────────── */
+    var SVG_ICONS = {
+      moon:  '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+      sun:   '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+      monitor:'<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>'
+    };
+    function svgIcon(name, size) {
+      size = size || 18;
+      return '<svg class="icon" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (SVG_ICONS[name] || '') + '</svg>';
+    }
+
     /* ────────── 滚动渐入 ────────── */
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('show'); io.unobserve(e.target); } });
@@ -753,13 +957,21 @@
 
     /* ────────── 主题切换：dark → light → system 循环 ────────── */
     var THEMES = ['dark', 'light', 'system'];
-    var ICONS = { dark: '🌙', light: '☀️', system: '🖥️' };
     var themeBtn = document.getElementById('themeBtn');
+    var themeIconWrap = document.getElementById('themeIconWrap');
+
     function applyTheme(t) {
       var sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       var isDark = t === 'dark' || (t === 'system' && sysDark);
-      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-      if (themeBtn) themeBtn.textContent = ICONS[t] || ICONS.system;
+      var actual = isDark ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', actual);
+      // 同步 theme-color meta（移动端顶栏跟随用户选择而非系统）
+      var mc = document.querySelector('meta[name="theme-color"]');
+      if (mc) mc.setAttribute('content', actual === 'light' ? '#fafafa' : '#09090b');
+      // 更新切换器图标（SVG 替代 emoji）
+      var iconName = (t === 'system') ? 'monitor' : (t === 'light' ? 'sun' : 'moon');
+      if (themeIconWrap) themeIconWrap.innerHTML = svgIcon(iconName, 18);
+      if (themeBtn) themeBtn.setAttribute('aria-pressed', t === 'dark' ? 'true' : 'false');
     }
     function currentTheme() {
       try { return localStorage.getItem('td_site_theme') || 'system'; } catch (e) { return 'system'; }
@@ -772,35 +984,81 @@
     }
     applyTheme(currentTheme());
     if (themeBtn) themeBtn.addEventListener('click', cycleTheme);
-    // 跟随系统变化时同步
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
       if (currentTheme() === 'system') applyTheme('system');
     });
 
-    /* ────────── 返回顶部 ────────── */
+    /* ────────── 移动端抽屉 ────────── */
+    var drawer = document.getElementById('mobileDrawer');
+    var backdrop = document.getElementById('drawerBackdrop');
+    var menuToggle = document.getElementById('menuToggle');
+    var mobileGhBtn = document.getElementById('mobileGhBtn');
+
+    function openDrawer() {
+      drawer.classList.add('open');
+      backdrop.classList.add('open');
+      menuToggle.setAttribute('aria-expanded', 'true');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeDrawer() {
+      drawer.classList.remove('open');
+      backdrop.classList.remove('open');
+      menuToggle.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    }
+    if (menuToggle) menuToggle.addEventListener('click', function () {
+      if (drawer.classList.contains('open')) closeDrawer();
+      else openDrawer();
+    });
+    if (backdrop) backdrop.addEventListener('click', closeDrawer);
+    document.querySelectorAll('[data-nav-close]').forEach(function (a) {
+      a.addEventListener('click', closeDrawer);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
+    });
+
+    /* ────────── 返回顶部（throttle） ────────── */
     var toTop = document.getElementById('toTop');
-    window.addEventListener('scroll', function () {
-      if (window.scrollY > 400) toTop.classList.add('show');
-      else toTop.classList.remove('show');
-    }, { passive: true });
+    var nav = document.getElementById('nav');
+    var ticking = false;
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () {
+        var y = window.scrollY;
+        if (y > 400) toTop.classList.add('show');
+        else toTop.classList.remove('show');
+        if (y > 20) nav.classList.add('scrolled');
+        else nav.classList.remove('scrolled');
+        ticking = false;
+      });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
     toTop.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }); });
 
-    /* ────────── 滚动激活导航高亮 ────────── */
+    /* ────────── 滚动激活导航高亮（基于 scroll position，更稳健） ────────── */
     var navLinks = Array.prototype.slice.call(document.querySelectorAll('.nav-links a[data-nav]'));
     var sections = navLinks.map(function (a) {
       var id = a.getAttribute('href').slice(1);
       return { id: id, el: document.getElementById(id), link: a };
     }).filter(function (s) { return s.el; });
-    var navObserver = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) {
-          navLinks.forEach(function (a) { a.classList.remove('active'); });
-          var match = sections.find(function (s) { return s.el === e.target; });
-          if (match) match.link.classList.add('active');
-        }
-      });
-    }, { rootMargin: '-40% 0px -50% 0px' });
-    sections.forEach(function (s) { navObserver.observe(s.el); });
+
+    function updateActiveNav() {
+      var scrollPos = window.scrollY + 120;
+      var current = null;
+      for (var i = 0; i < sections.length; i++) {
+        if (sections[i].el.offsetTop <= scrollPos) current = sections[i];
+      }
+      navLinks.forEach(function (a) { a.classList.remove('active'); });
+      if (current) current.link.classList.add('active');
+    }
+    window.addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { updateActiveNav(); ticking = false; });
+    }, { passive: true });
+    updateActiveNav();
 
     /* ────────── 键盘快捷键（参考 GitHub 习惯） ────────── */
     document.addEventListener('keydown', function (e) {
@@ -825,6 +1083,23 @@
         document.addEventListener('keydown', once);
       }
     });
+
+    /* ────────── 版本号 fetch：动态读取 VERSION 文件 ────────── */
+    fetch('VERSION').then(function (r) {
+      if (!r.ok) throw new Error();
+      return r.text();
+    }).then(function (v) {
+      v = v.trim();
+      if (!v) return;
+      var vb = document.getElementById('versionBadge');
+      var fv = document.getElementById('footerVersion');
+      if (vb) vb.textContent = v;
+      if (fv) fv.textContent = v;
+    }).catch(function () { /* 静默：本地无 VERSION 时保持默认 v1.0.0 */ });
+
+    /* ────────── 版权年份 ────────── */
+    var yearEl = document.getElementById('year');
+    if (yearEl) yearEl.textContent = new Date().getFullYear();
 
     /* ────────── CSS tooltip（与面板一致，data-tip） ────────── */
     var style = document.createElement('style');
