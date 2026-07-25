@@ -237,10 +237,16 @@ window.setFieldError = function(input, msg) {
 
 
 // ─── ToolDelta 启停 ───
+// 切换进行中标志：toggleTool 发起后置 true，updateToggleState 期间检测到则跳过 enabled=false
+// 避免 checkStatus 每 3s 轮询回填状态时把正在请求的按钮提前重新启用，造成重复点击
+var _togglingTool = false;
 function toggleTool() {
     var btn = document.getElementById('mainToggleBtn') || document.getElementById('consoleToggleBtn');
     if (!btn) return;
+    // 切换进行中或按钮已禁用时直接返回，避免重复请求
+    if (_togglingTool || btn.disabled) return;
     var isRunning = btn.getAttribute('data-running') === 'true';
+    _togglingTool = true;
     btn.disabled = true;
     btn.textContent = isRunning ? '停止中…' : '启动中…';
     // 进程状态指示器进入"启动中/停止中"过渡态，给用户即时视觉反馈
@@ -253,6 +259,7 @@ function toggleTool() {
     fetch(url, { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            _togglingTool = false;
             if (d.success) {
                 showToast(isRunning ? '已停止' : '已启动', 'success');
                 updateToggleState(!isRunning);
@@ -268,6 +275,7 @@ function toggleTool() {
             }
         })
         .catch(function() {
+            _togglingTool = false;
             showToast('请求失败', 'error');
             btn.disabled = false;
             btn.textContent = isRunning ? '停止' : '启动';
@@ -283,6 +291,9 @@ function updateToggleState(running) {
     var btn2 = document.getElementById('consoleToggleBtn');
     [btn1, btn2].forEach(function(btn) {
         if (!btn) return;
+        // 切换请求进行中时不要提前重新启用按钮，避免 checkStatus 3s 轮询期间用户重复点击
+        // 触发第二次 /api/tool/start（P2 #12）
+        if (_togglingTool) return;
         btn.disabled = false;
         btn.setAttribute('data-running', running ? 'true' : 'false');
         btn.textContent = running ? '停止' : '启动';

@@ -13,11 +13,14 @@ var input = document.getElementById('consoleInput');
 var statusEl = document.getElementById('consoleStatus');
 
 var HISTORY_KEY = 'td_console_history';
-var history = loadHistory();
+// ⚠ 不能用 `var history`：会与 window.history（[LegacyUnforgeable]，non-writable+non-configurable）
+// 冲突，导致赋值静默失败、history 仍指向 History 对象，后续 history.slice(-50) 抛 TypeError，
+// 整个 console.js 在第 20 行崩溃，控制台页面完全不可用。改为 cmdHistory。
+var cmdHistory = loadHistory();
 var histIdx = -1;          // -1 表示正在输入新命令
 var cmdLibrary = [];      // 来自 /api/commands 的所有命令 trigger，用于补全
-// 命令历史下拉专用（内存维护，最近 50 条）：与 ↑/↓ 用的 history 分离，互不干扰
-var _cmdHistory = history.slice(-50);
+// 命令历史下拉专用（内存维护，最近 50 条）：与 ↑/↓ 用的 cmdHistory 分离，互不干扰
+var _cmdHistory = cmdHistory.slice(-50);
 
 function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -25,10 +28,10 @@ function loadHistory() {
 }
 function saveHistory(cmd) {
     if (!cmd) return;
-    history = history.filter(function (c) { return c !== cmd; });
-    history.push(cmd);
-    if (history.length > 200) history = history.slice(-200);
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch (e) {}
+    cmdHistory = cmdHistory.filter(function (c) { return c !== cmd; });
+    cmdHistory.push(cmd);
+    if (cmdHistory.length > 200) cmdHistory = cmdHistory.slice(-200);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(cmdHistory)); } catch (e) {}
 }
 
 // 维护命令历史下拉数组（去重 + 追加 + 上限 50）
@@ -105,7 +108,8 @@ function appendLine(html) {
     if (lvl) div.classList.add(lvl);
     // 应用当前过滤状态（避免批量插入后再回流）
     if (_filterQuery) {
-        var text = div.textContent || '';
+        // 排除时间戳文本：否则输入纯数字（如 "30"）会匹配所有行的时间戳 HH:MM:SS.mmm
+        var text = _lineTextWithoutTs(div);
         if (text.toLowerCase().indexOf(_filterQuery) === -1) {
             div.classList.add('is-filtered-out');
         }
@@ -162,6 +166,7 @@ function _formatTs(d) {
 }
 
 // 暂停滚动：开启后新消息不滚动到底部，方便用户阅读历史
+var _pauseToastTimer = null;
 function togglePauseScroll() {
     _pauseScroll = !_pauseScroll;
     var btn = document.getElementById('pauseScrollBtn');
@@ -177,8 +182,10 @@ function togglePauseScroll() {
     if (!_pauseScroll) {
         scrollToBottom();
     }
-    if (typeof showToast === 'function') {
+    // toast 节流：快速多次点击暂停/继续，500ms 内只弹一次，避免堆积
+    if (typeof showToast === 'function' && !_pauseToastTimer) {
         showToast(_pauseScroll ? '已暂停自动滚动' : '已恢复自动滚动', 'info');
+        _pauseToastTimer = setTimeout(function () { _pauseToastTimer = null; }, 500);
     }
 }
 
@@ -239,7 +246,8 @@ function _applyFilter() {
         if (!_filterQuery) {
             line.classList.remove('is-filtered-out');
         } else {
-            var text = (line.textContent || '').toLowerCase();
+            // 排除时间戳文本：避免输入纯数字匹配所有行的时间戳 HH:MM:SS.mmm
+            var text = _lineTextWithoutTs(line).toLowerCase();
             line.classList.toggle('is-filtered-out', text.indexOf(_filterQuery) === -1);
         }
     }
@@ -247,6 +255,17 @@ function _applyFilter() {
     if (_filterQuery && !_pauseScroll) {
         body.scrollTop = body.scrollHeight;
     }
+}
+
+// 取一行的文本内容，但排除时间戳 span 的文本（用于过滤匹配，避免误命中）
+function _lineTextWithoutTs(line) {
+    var ts = line.querySelector('.c-ts');
+    if (!ts) return line.textContent || '';
+    // 临时 clone 后移除时间戳节点再取 textContent
+    var clone = line.cloneNode(true);
+    var tsClone = clone.querySelector('.c-ts');
+    if (tsClone) tsClone.remove();
+    return clone.textContent || '';
 }
 
 // 清除搜索过滤
@@ -264,7 +283,9 @@ _setupSearchFilter();
 
 var _sendingCmd = false;
 // 命令队列：替代原 120ms 硬锁（硬锁会丢弃连发命令），改为入队 + 100ms 间隔串行 flush
+// 上限 100：弱网断连期间用户连发会无限堆积，恢复后突袭服务端触发速率限制，故设上限
 var _cmdQueue = [];
+var _CMD_QUEUE_MAX = 100;
 
 // 供移动端「发送」按钮调用：读取输入框并发送
 function sendConsoleInput() {
@@ -284,10 +305,21 @@ function sendCommand(cmd) {
         appendLine('<span class="c-err">⚠ 未连接到服务器，命令未发送。请等待重连后重试。</span>');
         return;
     }
+    // 进程未运行时拒绝发送：socket 已连接但 ToolDelta 子进程未启动时，
+    // 服务端 send_command 会静默返回 False（命令丢失无提示）。这里提前拦截，给出明确反馈。
+    if (!window._tdProcessRunning) {
+        appendLine('<span class="c-err">⚠ ToolDelta 进程未启动，命令未发送。请先点击「启动」按钮。</span>');
+        return;
+    }
     // echo 与历史保存立即执行（即时反馈）；实际 emit 入队串行发送，避免连发丢失
     appendLine('<span class="c-cmd">$ ' + escapeHtml(cmd) + '</span>');
     saveHistory(cmd);
     _pushCmdHistory(cmd);
+    // 队列上限保护：超限丢弃最旧命令并提示，避免无限堆积
+    if (_cmdQueue.length >= _CMD_QUEUE_MAX) {
+        _cmdQueue.shift();
+        appendLine('<span class="c-hint">⚠ 命令队列已满（' + _CMD_QUEUE_MAX + '），丢弃最旧命令</span>');
+    }
     _cmdQueue.push(cmd);
     _flushCmdQueue();
 }
@@ -296,6 +328,14 @@ function sendCommand(cmd) {
 function _flushCmdQueue() {
     if (_sendingCmd) return;
     if (_cmdQueue.length === 0) return;
+    // 再次检查 socket.connected：用户首次发送时已校验过，但 flush 链在 100ms setTimeout 中
+    // 逐条消费，期间 socket 可能已断开。若不检查，emit 会静默失败，命令从队列 shift 出但
+    // 未到达服务端，造成命令丢失。检测到断连时 unshift 回队列并停止 flush，由 socket.on('connect')
+    // 恢复连接时重新触发 flush。
+    if (!socket.connected) {
+        _sendingCmd = false;
+        return;
+    }
     var cmd = _cmdQueue.shift();
     _sendingCmd = true;
     socket.emit('console_command', cmd);
@@ -316,7 +356,7 @@ function complete() {
         if (t && t.indexOf(prefix) === 0 && cands.indexOf(t) === -1) cands.push(t);
     });
     if (cands.length === 0) {
-        history.forEach(function (t) {
+        cmdHistory.forEach(function (t) {
             if (t && t.indexOf(prefix) === 0 && cands.indexOf(t) === -1) cands.push(t);
         });
     }
@@ -385,6 +425,10 @@ socket.on('connect', function () {
     var sendBtn = document.getElementById('console-send-btn');
     if (sendBtn) sendBtn.disabled = false;
     if (input) input.placeholder = _INPUT_PLACEHOLDER;
+    // 重连后恢复发送积压在队列中的命令（断连期间未发出的命令）
+    if (_cmdQueue.length > 0) {
+        _flushCmdQueue();
+    }
 });
 socket.on('disconnect', function () {
     // 进程运行中但实时通道断开：明确告知「进程仍在运行」，避免用户误以为启动失败
@@ -524,7 +568,19 @@ function copyAllConsole() {
     // 仅遍历元素子节点（跳过空白文本节点），避免每行多出空行
     var text = '';
     for (var i = 0; i < body.children.length; i++) {
-        text += body.children[i].textContent + '\n';
+        // 排除时间戳节点文本：未开启时间戳显示时，.c-ts 仍 DOM 存在（仅 CSS 隐藏），
+        // 直接读 textContent 会包含 HH:MM:SS.mmm，导致复制内容与用户所见不一致
+        var line = body.children[i];
+        var ts = line.querySelector('.c-ts');
+        if (ts) {
+            // 临时 clone 后移除时间戳节点
+            var clone = line.cloneNode(true);
+            var tsClone = clone.querySelector('.c-ts');
+            if (tsClone) tsClone.remove();
+            text += clone.textContent + '\n';
+        } else {
+            text += line.textContent + '\n';
+        }
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function () {
@@ -554,15 +610,15 @@ if (input) {
             sendCommand(cmd);
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            if (!history.length) return;
-            if (histIdx === -1) histIdx = history.length - 1;
+            if (!cmdHistory.length) return;
+            if (histIdx === -1) histIdx = cmdHistory.length - 1;
             else if (histIdx > 0) histIdx--;
-            input.value = history[histIdx];
+            input.value = cmdHistory[histIdx];
             moveCursorEnd(input);
         } else if (e.key === 'ArrowDown') {
             e.preventDefault();
             if (histIdx === -1) return;
-            if (histIdx < history.length - 1) { histIdx++; input.value = history[histIdx]; }
+            if (histIdx < cmdHistory.length - 1) { histIdx++; input.value = cmdHistory[histIdx]; }
             else { histIdx = -1; input.value = ''; }
             moveCursorEnd(input);
         } else if (e.key === 'Tab') {
@@ -570,7 +626,13 @@ if (input) {
             complete();
         }
     });
-    input.focus();
+    // 仅在非触屏设备聚焦：移动端自动 focus 会触发虚拟键盘弹出，遮挡控制台输出
+    // 用户体验差，需手动收起。检测方式：粗略判断是否有 coarse pointer（matchMedia），
+    // 不支持 matchMedia 的旧浏览器回退到不聚焦（安全选择）
+    var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    if (!isCoarse) {
+        input.focus();
+    }
 }
 
 function escapeHtml(s) {
@@ -618,7 +680,20 @@ function renderFavs() {
     });
 })();
 
-function clearConsole() { if (body) body.innerHTML = ''; }
+function clearConsole() {
+    if (!body) return;
+    body.innerHTML = '';
+    // 清空待刷新的批处理缓冲：高频输出期间点清屏，未刷新的行会再次冒出
+    _batchBuffer = null;
+    _batchPending = null;
+    _outputBuffer = [];
+    if (_outputTimer) { clearTimeout(_outputTimer); _outputTimer = null; }
+    // 重置未读消息计数与提示按钮，避免清屏后 pill 残留"N 条新"
+    _newMsgCount = 0;
+    if (_pill) _pill.style.display = 'none';
+    if (_scrollBtn) _scrollBtn.style.display = 'none';
+    if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
+}
 
 /* ─── 命令历史下拉（最近 10 条，选择填入输入框） ─────────────── */
 function toggleCmdHistory() {
