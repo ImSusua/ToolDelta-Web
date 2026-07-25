@@ -201,6 +201,8 @@ fetch('/api/commands')
 
 // 输入框默认 placeholder（断开时改为「未连接...」，连接恢复时还原）
 var _INPUT_PLACEHOLDER = '输入命令...（↑/↓ 翻历史，Tab 补全）';
+// 进程状态（由 main.js updateToggleState 同步），用于 disconnect 时给出更准确的提示
+window._tdProcessRunning = false;
 socket.on('connect', function () {
     if (statusEl) { statusEl.textContent = '已连接'; statusEl.className = 'status-conn connected'; }
     var bar = document.querySelector('.console-bar');
@@ -211,13 +213,19 @@ socket.on('connect', function () {
     if (input) input.placeholder = _INPUT_PLACEHOLDER;
 });
 socket.on('disconnect', function () {
-    if (statusEl) { statusEl.textContent = '已断开'; statusEl.className = 'status-conn disconnected'; }
+    // 进程运行中但实时通道断开：明确告知「进程仍在运行」，避免用户误以为启动失败
+    if (window._tdProcessRunning) {
+        if (statusEl) { statusEl.textContent = '实时通道断开（进程运行中）'; statusEl.className = 'status-conn disconnected'; }
+        if (input) input.placeholder = '实时通道断开，命令暂不可发送...';
+    } else {
+        if (statusEl) { statusEl.textContent = '已断开'; statusEl.className = 'status-conn disconnected'; }
+        if (input) input.placeholder = '未连接...';
+    }
     var bar = document.querySelector('.console-bar');
     if (bar) bar.classList.remove('is-connected');
     // 断开时禁用发送按钮 + 提示未连接，避免用户继续输入被静默丢弃
     var sendBtn = document.getElementById('console-send-btn');
     if (sendBtn) sendBtn.disabled = true;
-    if (input) input.placeholder = '未连接...';
 });
 // 移动端弱网：重连尝试提示（带尝试次数显示）
 // 弱网下 connect_error 高频触发，对 statusEl 的 DOM 更新做节流，避免每秒多次重排
@@ -260,10 +268,16 @@ socket.on('reconnect', function () {
 });
 // 重连 20 次仍失败：停止自动重连，提供「重试」按钮供用户手动恢复
 socket.io.on('reconnect_failed', function () {
-    if (statusEl) statusEl.innerHTML = '连接失败 <button class="btn btn-sm btn-outline" onclick="manualReconnect()">重试</button>';
+    // 进程仍在运行但实时通道彻底失败：明确告知用户两种状态分离，避免误判
+    if (window._tdProcessRunning) {
+        if (statusEl) statusEl.innerHTML = '实时通道失败（进程运行中） <button class="btn btn-sm btn-outline" onclick="manualReconnect()">重试</button>';
+        if (input) input.placeholder = '实时通道失败，命令暂不可发送，点击重试恢复...';
+    } else {
+        if (statusEl) statusEl.innerHTML = '连接失败 <button class="btn btn-sm btn-outline" onclick="manualReconnect()">重试</button>';
+        if (input) input.placeholder = '未连接...';
+    }
     var sendBtn = document.getElementById('console-send-btn');
     if (sendBtn) sendBtn.disabled = true;
-    if (input) input.placeholder = '未连接...';
 });
 function manualReconnect() { if (window.socket) socket.connect(); }
 

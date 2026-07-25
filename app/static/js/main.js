@@ -242,7 +242,13 @@ function toggleTool() {
     if (!btn) return;
     var isRunning = btn.getAttribute('data-running') === 'true';
     btn.disabled = true;
-    btn.textContent = '操作中...';
+    btn.textContent = isRunning ? '停止中…' : '启动中…';
+    // 进程状态指示器进入"启动中/停止中"过渡态，给用户即时视觉反馈
+    var psEl = document.getElementById('processStatus');
+    if (psEl) {
+        psEl.textContent = isRunning ? '停止中…' : '启动中…';
+        psEl.className = 'process-status starting';
+    }
     var url = isRunning ? '/api/tool/stop' : '/api/tool/start';
     fetch(url, { method: 'POST' })
         .then(function(r) { return r.json(); })
@@ -254,12 +260,21 @@ function toggleTool() {
                 showToast('操作失败', 'error');
                 btn.disabled = false;
                 btn.textContent = isRunning ? '停止' : '启动';
+                // 恢复进程状态指示器
+                if (psEl) {
+                    psEl.textContent = isRunning ? '进程运行中' : '进程未启动';
+                    psEl.className = 'process-status ' + (isRunning ? 'running' : 'stopped');
+                }
             }
         })
         .catch(function() {
             showToast('请求失败', 'error');
             btn.disabled = false;
             btn.textContent = isRunning ? '停止' : '启动';
+            if (psEl) {
+                psEl.textContent = isRunning ? '进程运行中' : '进程未启动';
+                psEl.className = 'process-status ' + (isRunning ? 'running' : 'stopped');
+            }
         });
 }
 
@@ -285,6 +300,15 @@ function updateToggleState(running) {
     // 同步 sr-only 文本（base.html 中 #sidebarStatusText）
     var stText = document.getElementById('sidebarStatusText');
     if (stText) stText.textContent = running ? 'ToolDelta 运行中' : 'ToolDelta 已停止';
+    // 同步控制台 process-status 指示器（与 Socket.IO 通道状态分离，
+    // 让用户能区分「进程运行中」与「实时通道断开」两种不同情况，
+    // 修复「点击启动后显示未连接」的 UX 误导）
+    window._tdProcessRunning = running;
+    var psEl = document.getElementById('processStatus');
+    if (psEl) {
+        psEl.textContent = running ? '进程运行中' : '进程未启动';
+        psEl.className = 'process-status ' + (running ? 'running' : 'stopped');
+    }
 }
 
 // ─── 自定义确认弹窗（替代浏览器 confirm） + 输入确认弹窗 ───

@@ -11,7 +11,8 @@
 
 <div class="console-wrap">
     <div class="console-bar">
-        <span id="consoleStatus" class="status-conn disconnected" role="status" aria-live="polite">未连接</span>
+        <span id="consoleStatus" class="status-conn connecting" role="status" aria-live="polite">连接中…</span>
+        <span id="processStatus" class="process-status stopped" role="status" aria-live="polite" title="ToolDelta 进程状态">进程未启动</span>
         <button class="btn btn-sm btn-outline" id="copyAllBtn" onclick="copyAllConsole()" aria-label="复制全部输出">复制</button>
         <button class="btn btn-sm btn-outline" id="scrollBottomBtn" onclick="scrollToBottom()" style="display:none" aria-label="滚动到最新">↓ 最新</button>
         <button id="newMsgPill" class="new-msg-pill" role="button" tabindex="0" aria-label="跳到最新" style="display:none"><span id="newMsgCount">0</span> 条新</button>
@@ -54,6 +55,23 @@
 }
 .status-conn.connected { color: var(--success); }
 .status-conn.disconnected { color: var(--danger); }
+.status-conn.connecting { color: var(--warning); }
+/* 进程状态指示器：与 Socket.IO 通道状态分离，避免用户混淆
+   - stopped: 进程未启动（灰色）
+   - running: 进程运行中（绿色）
+   - starting: 进程启动中（黄色） */
+.process-status {
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink-subtle);
+}
+.process-status.stopped { color: var(--ink-subtle); }
+.process-status.running { color: var(--success); border-color: var(--success); }
+.process-status.starting { color: var(--warning); border-color: var(--warning); }
 .new-msg-pill {
   margin-left:auto; background: var(--primary); color: #fff;
   padding: 3px 10px; border-radius: 999px; font-size: 11px;
