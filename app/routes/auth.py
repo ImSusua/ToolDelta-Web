@@ -183,6 +183,9 @@ def create_user():
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     role = data.get("role", 1)
+    # 角色范围校验:只允许 1(普通用户)或 10(管理员),防止 role=99 等污染
+    if role not in (1, 10):
+        return fail("角色不合法")
     if not username or not password:
         return fail("参数不完整")
     valid, msg = auth_service.validate_username(username)

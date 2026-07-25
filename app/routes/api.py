@@ -91,6 +91,9 @@ def tool_command():
 
 @bp.route("/tool/output")
 def tool_output():
+    # 进程输出可能含敏感信息(token/路径),仅管理员可读
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     tail = request.args.get("tail", 200, type=int)
     as_html = request.args.get("html", "0") == "1"
     return jsonify({"lines": tooldelta_manager.get_output(tail, as_html=as_html)})
@@ -176,6 +179,9 @@ def plugin_config():
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "缺少插件名"})
+    # 仅管理员可读插件配置(配置文件可能含敏感信息)
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     return jsonify(plugin_service.get_plugin_config(name) or {"error": "无配置文件"})
 
 @bp.route("/plugins/config", methods=["POST"])
@@ -436,9 +442,11 @@ def create_backup():
         return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     name = data.get("name")
+    if name is not None and not isinstance(name, str):
+        return jsonify({"success": False, "error": "名称必须为字符串"})
     try:
         meta = backup_service.create_backup(name)
-    except ValueError as e:
+    except (ValueError, AttributeError, TypeError) as e:
         return jsonify({"success": False, "error": str(e)})
     audit("创建备份", f"名称={meta.get('name','?')}")
     # 与 restore/delete 保持返回结构一致（前端期望 d.success），见 backup.html:100
@@ -450,8 +458,12 @@ def restore_backup():
         return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     zip_name = data.get("zip")
-    if not zip_name:
+    if not zip_name or not isinstance(zip_name, str):
         return jsonify({"success": False, "error": "缺少备份文件名"})
+    # 路径遍历防护:zip_name 必须是合法文件名,不含路径分隔符
+    safe = backup_service._sanitize_label(zip_name.replace(".zip", ""))
+    if not safe or safe + ".zip" != zip_name:
+        return jsonify({"success": False, "error": "备份文件名不合法"})
     ok, msg = backup_service.restore_backup(zip_name)
     return jsonify({"success": ok, "message": msg})
 
@@ -461,9 +473,14 @@ def delete_backup():
         return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     zip_name = data.get("zip")
-    if not zip_name:
+    if not zip_name or not isinstance(zip_name, str):
         return jsonify({"success": False, "error": "缺少备份文件名"})
-    backup_service.delete_backup(zip_name)
+    safe = backup_service._sanitize_label(zip_name.replace(".zip", ""))
+    if not safe or safe + ".zip" != zip_name:
+        return jsonify({"success": False, "error": "备份文件名不合法"})
+    ok = backup_service.delete_backup(zip_name)
+    if not ok:
+        return jsonify({"success": False, "error": "备份不存在或文件名不合法"})
     return jsonify({"success": True})
 
 @bp.route("/reset", methods=["POST"])
@@ -554,6 +571,9 @@ def save_launcher_config():
 
 @bp.route("/fbtoken")
 def get_fbtoken():
+    # fbtoken 是 ToolDelta 接入 MC 服务器的高危凭据,仅管理员可读
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     td_dir = current_app.config["TOOLDELTA_DIR"]
     token_path = os.path.join(td_dir, "fbtoken")
     token = ""

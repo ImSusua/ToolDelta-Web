@@ -293,7 +293,7 @@ function setManualWallpaper() {
             document.getElementById('manualWallpaperUrl').value = '';
             showToast('壁纸已设置', 'success');
         } else {
-            errEl = document.getElementById('wallpaperError');
+            var errEl = document.getElementById('wallpaperError');
             errEl.textContent = d.error || '设置失败';
             errEl.style.display = 'block';
         }
@@ -411,7 +411,7 @@ function loadUsers() {
         var tbody = document.getElementById('userList');
         if (!tbody) return;
         tbody.innerHTML = '';
-        var current = '{{ session.get("username","") }}';
+        var current = {{ session.get("username","")|tojson }};
         d.data.forEach(function(u) {
             var tr = document.createElement('tr');
             var roleLabel = u.role === 10 ? '管理员' : '普通用户';

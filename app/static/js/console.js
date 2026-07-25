@@ -237,7 +237,9 @@ var _reconnFatal = false; // 不可恢复错误标志：认证失效后不再重
 socket.on('connect_error', function (err) {
     // 认证类错误：token 过期/会话失效，重连无意义，直接停止并提示重新登录
     var desc = (err && (err.description || err.message)) || '';
-    var status = (err && (err.context && err.context.code)) || (err && err.status) || 0;
+    // socket.io polling 401/403 时,HTTP 状态码位于 err.context.xhr.status
+    var status = (err && err.context && err.context.xhr && err.context.xhr.status)
+              || (err && err.status) || 0;
     if (status === 401 || status === 403 || /auth|forbidden|unauthorized|401|403/i.test(desc)) {
         if (!_reconnFatal) {
             _reconnFatal = true;
@@ -279,7 +281,15 @@ socket.io.on('reconnect_failed', function () {
     var sendBtn = document.getElementById('console-send-btn');
     if (sendBtn) sendBtn.disabled = true;
 });
-function manualReconnect() { if (window.socket) socket.connect(); }
+function manualReconnect() {
+    // 重置所有重连状态,避免上次失败状态残留导致重试按钮立即被冲掉、计数器累加误导
+    _reconnAttempts = 0;
+    _reconnShown = false;
+    _reconnFatal = false;
+    if (window.socket && socket.io && socket.io.opts) socket.io.opts.reconnection = true;
+    if (statusEl) { statusEl.textContent = '重连中…'; statusEl.className = 'status-conn connecting'; }
+    if (window.socket) socket.connect();
+}
 
 // console_output 批处理：50ms 内的多次输出合并为一次 flush，减少高频刷屏时的 reflow
 var _outputBuffer = [];

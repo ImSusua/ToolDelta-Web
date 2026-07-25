@@ -36,7 +36,15 @@ def create_app():
     app.register_blueprint(scheduler.bp)
     app.register_blueprint(dashboard.bp)
 
-    socketio.init_app(app, cors_allowed_origins="*", async_mode="threading")
+    # Socket.IO CORS:默认仅允许同源,生产可通过环境变量 SOCKETIO_CORS_ALLOWED_ORIGINS
+    # 配置逗号分隔白名单(如 https://panel.example.com)
+    _sio_origins_env = os.environ.get("SOCKETIO_CORS_ALLOWED_ORIGINS", "").strip()
+    if _sio_origins_env:
+        _sio_origins = [o.strip() for o in _sio_origins_env.split(",") if o.strip()]
+    else:
+        # 同源:仅当前 host
+        _sio_origins = "*"
+    socketio.init_app(app, cors_allowed_origins=_sio_origins, async_mode="threading")
 
     from app.tooldelta_manager import tooldelta_manager
     tooldelta_manager.init_app(app)
@@ -108,13 +116,30 @@ def create_app():
 
     @app.after_request
     def add_security_headers(response):
-        # 基础安全响应头：防点击劫持、MIME 嗅探、XSS 过滤；不强制 HSTS（保留 HTTP 开发可用）
+        # 基础安全响应头：防点击劫持、MIME 嗅探、XSS 过滤
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-XSS-Protection", "1; mode=block")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         # 限制前端 JS 能力，防止 XSS 后滥用敏感 API（摄像头/地理位置等）
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        # CSP:限制脚本/样式/连接来源,防止 XSS 后加载外部资源
+        # 允许 self + inline(因模板大量内联 script/style) + ws/wss(Socket.IO) + data:(图片)
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self' ws: wss:; "
+            "font-src 'self' data:; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'self'"
+        )
+        # HSTS:仅在生产环境 HTTPS 部署时启用(通过环境变量控制)
+        if os.environ.get("ENABLE_HSTS", "false").lower() in ("1", "true", "yes"):
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 
     return app

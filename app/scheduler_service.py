@@ -309,7 +309,18 @@ class SchedulerService:
     def _run_job(self, job, now):
         with self._lock:
             try:
-                tooldelta_manager.send_command(job["command"])
+                # 检查 send_command 返回值:进程未运行/写入失败时返回 False
+                # 仅成功才更新 last_run/run_count,避免"假成功"误导用户
+                ok = tooldelta_manager.send_command(job["command"])
+                if not ok:
+                    job["last_error"] = now.strftime(_FMT) + " 进程未运行或命令发送失败"
+                    try:
+                        log_service.warning(
+                            f"定时任务未执行(进程未运行或发送失败): {job['name']}", "SCHEDULER"
+                        )
+                    except Exception:
+                        pass
+                    return
                 job["last_run"] = now.strftime(_FMT)
                 job["run_count"] = job.get("run_count", 0) + 1
                 try:

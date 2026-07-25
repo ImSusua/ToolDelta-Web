@@ -442,16 +442,23 @@ class ToolDeltaManager:
                 # stdin 仍走 PIPE(不接 pty), 避免终端回显把输入又打回控制台。
                 master, slave = pty.openpty()
                 self.pty_master = master
-                self.process = subprocess.Popen(
-                    [python_bin, main_py],
-                    cwd=td_dir,
-                    stdin=subprocess.PIPE,
-                    stdout=slave,
-                    stderr=slave,
-                    startupinfo=startupinfo,
-                    bufsize=0,
-                    env=env,
-                )
+                try:
+                    self.process = subprocess.Popen(
+                        [python_bin, main_py],
+                        cwd=td_dir,
+                        stdin=subprocess.PIPE,
+                        stdout=slave,
+                        stderr=slave,
+                        startupinfo=startupinfo,
+                        bufsize=0,
+                        env=env,
+                    )
+                except Exception:
+                    # Popen 失败时清理已打开的 pty fd,避免累积 fd 泄漏
+                    os.close(slave)
+                    os.close(master)
+                    self.pty_master = None
+                    raise
                 os.close(slave)  # 父进程关闭 slave 副本, 子进程已 dup2
             else:
                 # Windows 无 pty 模块, 回退 PIPE。自适配策略：Unix 用真实伪终端让子进程
@@ -494,6 +501,11 @@ class ToolDeltaManager:
             except Exception:
                 try:
                     proc.kill()
+                    # 显式 wait 回收僵尸进程,避免 PID/资源不释放
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             # 进程退出后再关闭 stdin，避免子进程因 stdin 提前关闭收到 SIGPIPE 崩溃
@@ -508,7 +520,11 @@ class ToolDeltaManager:
                     os.close(pty)
                 except Exception:
                     pass
-        self.pty_master = None
+            # 在锁内清空 pty_master,避免锁外赋 None 覆盖并发 start() 已设置的新 master
+            with self._lock:
+                # 仅当当前 pty_master 仍是本次 stop 持有的旧 master 时才清空
+                if self.pty_master is pty:
+                    self.pty_master = None
         self._broadcast("system", "ToolDelta 进程已停止")
         return True
 

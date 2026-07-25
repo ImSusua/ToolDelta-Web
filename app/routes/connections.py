@@ -30,6 +30,10 @@ def connections_page():
 
 @bp.route("/api/connections")
 def api_list():
+    # 仅管理员可读,避免泄露 token 凭据给普通用户
+    err = _admin_required()
+    if err:
+        return err
     return jsonify(conn_svc.list_connections())
 
 

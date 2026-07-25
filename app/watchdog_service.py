@@ -257,16 +257,19 @@ class WatchdogService:
         )
 
         if can_restart:
-            tooldelta_manager.start()
-            with self._lock:
-                self._runtime["restarts_count"] += 1
-                self._runtime["last_restart"] = now
-                self._runtime["healthy"] = False
-                self._runtime["last_event"] = "于 %s 自动重启 ToolDelta" % now
-            try:
-                log_service.warn(self._runtime["last_event"], "WATCHDOG")
-            except Exception:
-                pass
+            start_ok = tooldelta_manager.start()
+            # 仅在 start() 返回成功时才递增 restarts_count,避免依赖缺失/文件损坏时
+            # 反复尝试失败也耗尽 max_restarts 导致永久放弃守护
+            if start_ok:
+                with self._lock:
+                    self._runtime["restarts_count"] += 1
+                    self._runtime["last_restart"] = now
+                    self._runtime["healthy"] = False
+                    self._runtime["last_event"] = "于 %s 自动重启 ToolDelta" % now
+                try:
+                    log_service.warn(self._runtime["last_event"], "WATCHDOG")
+                except Exception:
+                    pass
         else:
             with self._lock:
                 self._runtime["healthy"] = False

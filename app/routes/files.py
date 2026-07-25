@@ -452,11 +452,16 @@ def batch_delete():
     if err: return err
     data = request.get_json(silent=True) or {}
     paths = data.get("paths") or []
+    if not isinstance(paths, list):
+        return fail("paths 必须为数组")
     if not paths:
         return fail("未选择文件")
     deleted = []
     errors = []
     for raw in paths:
+        if not isinstance(raw, str):
+            errors.append(f"{raw!r}: 路径必须为字符串")
+            continue
         full = safe_path(raw.strip())
         if not full:
             errors.append(f"{raw}: 路径不允许")

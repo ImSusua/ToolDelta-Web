@@ -2,6 +2,9 @@ import os
 import json
 import shutil
 import zipfile
+import socket
+import tempfile
+import threading
 from urllib.parse import urlparse
 from werkzeug.utils import secure_filename
 from flask import current_app
@@ -10,6 +13,7 @@ from app.market_service import market_service
 class PluginService:
     def __init__(self):
         self._cache = None
+        self._cfg_lock = threading.Lock()
 
     def get_classic_plugin_path(self):
         return current_app.config["TOOLDELTA_CLASSIC_PLUGIN_PATH"]
@@ -19,6 +23,20 @@ class PluginService:
 
     def get_data_path(self):
         return current_app.config["TOOLDELTA_PLUGIN_DATA_DIR"]
+
+    @staticmethod
+    def _safe_name(name):
+        """插件名白名单校验：禁止路径分隔符/.. 防止路径遍历。
+        返回安全名或 None（不合法）。"""
+        if not name or not isinstance(name, str):
+            return None
+        if "/" in name or "\\" in name or ".." in name or os.path.isabs(name):
+            return None
+        s = secure_filename(name)
+        # secure_filename 对中文等会返回空，因此仅在它非空且与原名差异大时拒绝
+        if not s:
+            return None
+        return name
 
     def list_plugins(self):
         plugins = []
@@ -55,6 +73,8 @@ class PluginService:
         return plugins
 
     def toggle_plugin(self, name, enable):
+        if self._safe_name(name) is None:
+            return False
         pdir = self.get_classic_plugin_path()
         enabled_dir = os.path.join(pdir, name)
         disabled_dir = os.path.join(pdir, name + "+disabled")
@@ -69,6 +89,8 @@ class PluginService:
         return False
 
     def delete_plugin(self, name):
+        if self._safe_name(name) is None:
+            return False
         pdir = self.get_classic_plugin_path()
         for d in [name, name + "+disabled"]:
             full = os.path.join(pdir, d)
@@ -152,6 +174,8 @@ class PluginService:
                 shutil.rmtree(temp_dir)
 
     def get_plugin_readme(self, name):
+        if self._safe_name(name) is None:
+            return None
         pdir = self.get_classic_plugin_path()
         for d in [name, name + "+disabled"]:
             full = os.path.join(pdir, d)
@@ -163,23 +187,44 @@ class PluginService:
         return None
 
     def get_plugin_config(self, name):
+        if self._safe_name(name) is None:
+            return None
         cfg_path = os.path.join(self.get_cfg_path(), f"{name}.json")
         if os.path.isfile(cfg_path):
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return None
         return None
 
     def save_plugin_config(self, name, data):
+        if self._safe_name(name) is None:
+            return False
         cfg_dir = self.get_cfg_path()
         os.makedirs(cfg_dir, exist_ok=True)
         cfg_path = os.path.join(cfg_dir, f"{name}.json")
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # 原子写：临时文件 + os.replace，避免并发写损坏（与 auth_service 一致）
+        with self._cfg_lock:
+            fd, tmp = tempfile.mkstemp(prefix=f"{name}.", suffix=".tmp", dir=cfg_dir)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp, cfg_path)
+            except Exception:
+                try: os.remove(tmp)
+                except OSError: pass
+                raise
         return True
 
     def get_plugin_data_files(self, name):
+        if self._safe_name(name) is None:
+            return []
         data_dir = os.path.join(self.get_data_path(), name)
         if not os.path.isdir(data_dir):
+            return []
+        # 兜底：确保 data_dir 在 get_data_path() 下，避免 .. 逃逸
+        if not os.path.abspath(data_dir).startswith(os.path.abspath(self.get_data_path()) + os.sep):
             return []
         result = []
         for root, dirs, files in os.walk(data_dir):
@@ -189,6 +234,8 @@ class PluginService:
         return result
 
     def upload_data_file(self, name, file):
+        if self._safe_name(name) is None:
+            return False
         data_dir = os.path.join(self.get_data_path(), name)
         os.makedirs(data_dir, exist_ok=True)
         fname = secure_filename(file.filename)
@@ -202,6 +249,8 @@ class PluginService:
         return True
 
     def delete_data_file(self, name, filename):
+        if self._safe_name(name) is None:
+            return False
         data_dir = os.path.join(self.get_data_path(), name)
         fname = secure_filename(filename)
         if not fname:
@@ -216,6 +265,8 @@ class PluginService:
         return False
 
     def upload_config_file(self, name, file):
+        if self._safe_name(name) is None:
+            return False
         cfg_dir = self.get_cfg_path()
         os.makedirs(cfg_dir, exist_ok=True)
         fname = secure_filename(file.filename)
@@ -257,11 +308,28 @@ class PluginService:
     def install_network_plugin(self, market_url, plugin_id):
         try:
             import requests
+            import ipaddress
             base = market_url.rstrip("/")
             # SSRF 防护：仅允许 http/https 协议的市场源（P1-5）
             parsed = urlparse(base)
             if parsed.scheme not in ("http", "https"):
                 return False, "不支持的市场源协议"
+            host = parsed.hostname or ""
+            if not host:
+                return False, "市场源地址不合法"
+            # 拒绝内网/回环/链路本地/保留地址,防止 SSRF 探测内网或读取云元数据
+            try:
+                ips = socket.getaddrinfo(host, None)
+            except socket.gaierror:
+                return False, "无法解析市场源域名"
+            for family, _, _, _, sockaddr in ips:
+                ip_str = sockaddr[0]
+                try:
+                    ip = ipaddress.ip_address(ip_str)
+                except ValueError:
+                    continue
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                    return False, "不允许访问内网或本地地址"
             pmap = requests.get(f"{base}/plugin_ids_map.json", timeout=10).json()
             if plugin_id not in pmap:
                 return False, "插件 ID 不在该市场源中"
