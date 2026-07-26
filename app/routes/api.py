@@ -46,9 +46,21 @@ def _is_safe_url(url):
     return True
 
 def audit(action, detail=""):
-    user = session.get("username", "?")
-    ip = request.remote_addr or "?"
-    log_service.info(f"[{user}@{ip}] {action} {detail}", "AUDIT")
+    # 用户名/详情统一过滤控制字符,防止 plugin name / filename / plugin_id 等
+    # 含 \n 伪造审计日志行(日志注入)。复用 log_service.sanitize_for_log
+    # 与 routes/auth.py:_sanitize_for_log 行为一致,统一从 log_service 导出避免分叉。
+    user = log_service.sanitize_for_log(session.get("username", "?"))
+    ip = _client_ip()
+    log_service.info(f"[{user}@{ip}] {action} {log_service.sanitize_for_log(detail)}", "AUDIT")
+
+def _client_ip():
+    """获取客户端真实 IP:反代场景下取 X-Forwarded-For 最左值,
+    与 routes/auth.py:_client_ip 行为一致,避免所有审计日志记录为反代 IP。"""
+    if current_app.config.get("BEHIND_PROXY"):
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.remote_addr or "?"
 
 def _internal_error(e, action="操作"):
     """统一处理内部异常：记录详情到日志，只返回通用错误给客户端，避免 str(e) 泄露内部路径/堆栈（P1-5）"""
@@ -180,7 +192,12 @@ def upload_plugin():
     if f.content_length and f.content_length > MAX_PLUGIN_UPLOAD_SIZE:
         return jsonify({"success": False, "error": "插件包超过 50MB 上限"})
     try:
-        plugin_service.upload_plugin(f)
+        # upload_plugin 在「插件名不合法」「压缩包结构错误」「同名插件已存在」等场景
+        # 会返回 (False, msg) 元组而非抛异常。旧实现丢弃返回值恒返回 success=True,
+        # 导致客户端误以为上传成功但插件实际未落盘。这里检查返回值并反馈。
+        ret = plugin_service.upload_plugin(f)
+        if isinstance(ret, tuple) and ret[0] is False:
+            return jsonify({"success": False, "error": ret[1] or "上传失败"})
         audit("上传插件", f"文件={f.filename}")
         return jsonify({"success": True})
     except Exception as e:
@@ -244,7 +261,10 @@ def upload_data_file():
     if "file" not in request.files:
         return jsonify({"success": False, "error": "未上传文件"})
     f = request.files["file"]
-    plugin_service.upload_data_file(name, f)
+    # upload_data_file 在「插件名不合法」「文件名不合法」「落点越权」「文件过大」时返回 False,
+    # 旧实现丢弃返回值恒返回 success=True。这里检查并反馈,避免客户端误以为上传成功
+    if not plugin_service.upload_data_file(name, f):
+        return jsonify({"success": False, "error": "上传失败:插件名或文件名不合法,或文件超过 50MB 上限"})
     return jsonify({"success": True})
 
 @bp.route("/plugins/data-delete", methods=["POST"])
@@ -269,7 +289,10 @@ def upload_config_file():
     if "file" not in request.files:
         return jsonify({"success": False, "error": "未上传文件"})
     f = request.files["file"]
-    plugin_service.upload_config_file(name, f)
+    # upload_config_file 在「插件名不合法」「文件名不合法」「落点越权」时返回 False,
+    # 旧实现丢弃返回值恒返回 success=True。这里检查并反馈
+    if not plugin_service.upload_config_file(name, f):
+        return jsonify({"success": False, "error": "上传失败:插件名或文件名不合法"})
     return jsonify({"success": True})
 
 # ─── 预设/网络 安装 ────────────────────────
@@ -369,7 +392,9 @@ def market_connect():
 def market_plugins():
     market_service.scan()
     by = request.args.get("by", "name")
-    kw = request.args.get("q", "")
+    # 长度上限:防止超长字符串触发 market_service.search 的 .lower() 全串内存分配
+    # 与同文件 /commands 的 [:128] 一致
+    kw = request.args.get("q", "")[:128]
     if kw:
         return jsonify(market_service.search(kw, by))
     return jsonify(market_service.get_plugins())
@@ -411,6 +436,9 @@ def commands_by_plugin():
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "缺少插件名"})
+    # 长度上限:防止超长字符串触发 cmd_scanner.scan_by_plugin 内部 basename+realpath 浪费 CPU
+    # 与同文件 /commands /market/plugin 的 [:128] 一致
+    name = name[:128]
     return jsonify(cmd_scanner.scan_by_plugin(name))
 
 @bp.route("/commands/stats")

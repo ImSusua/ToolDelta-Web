@@ -33,6 +33,11 @@
 
   function applyWallpaper(url, animate) {
     var bg = ensureBg();
+    // 纵深防御:即便 url 来自 localStorage/后端响应(已过后端 save() 校验),
+    // 这里仍显式转义单引号/双引号/反斜杠,防止 backgroundImage 表达式被构造 CSS 注入
+    if (typeof url === 'string') {
+      url = url.replace(/['"\\]/g, encodeURIComponent);
+    }
     bg.style.backgroundImage = "url('" + url + "')";
     if (animate !== false) {
       bg.classList.add('wp-fade');

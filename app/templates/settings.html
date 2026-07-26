@@ -9,11 +9,13 @@
         <div id="wallpaperPreview" class="wallpaper-preview"></div>
         <script>
           // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
+          // 纵深防御:即便后端 wallpaper_service.save() 已拦截单引号,这里再前端兜底
+          // 转义单引号/双引号/反斜杠,防止 backgroundImage 表达式被构造 CSS 注入
           (function(){
             var wUrl = {{ wallpaper_url|tojson }};
             if (wUrl) {
               var el = document.getElementById('wallpaperPreview');
-              if (el) el.style.backgroundImage = "url('" + wUrl + "')";
+              if (el) el.style.backgroundImage = "url('" + String(wUrl).replace(/['"\\]/g, encodeURIComponent) + "')";
             }
           })();
         </script>
@@ -274,10 +276,13 @@ loadLauncherConfig();
 loadFbtoken();
 
 // 校验 URL 协议（仅允许 http/https）后再拼接，防止 CSS 注入
+// 纵深防御:encodeURI 不编码单引号/双引号/反斜杠,这里显式 replace
+// 防止 backgroundImage 表达式被构造注入(与 base.html/login.html 初始拼接一致)
 function safeWallpaperUrl(url) {
     if (!url || typeof url !== 'string') return '';
     if (!/^https?:\/\//i.test(url)) return '';
     try { url = encodeURI(url); } catch(e) { return ''; }
+    url = url.replace(/['"\\]/g, encodeURIComponent);
     return "url('" + url + "')";
 }
 

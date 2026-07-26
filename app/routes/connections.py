@@ -1,6 +1,7 @@
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, render_template, request, jsonify, session, abort
 
 from app import connection_service as conn_svc
+from app.log_service import log_service
 
 bp = Blueprint("connections", __name__)
 
@@ -25,6 +26,10 @@ def _admin_required():
 
 @bp.route("/connections")
 def connections_page():
+    # 页面入口与 console.py 一致要求管理员:避免普通用户进入页面后所有 API 返回 403,
+    # UI 显示空白(信息泄露虽小,但体验差且暴露前端骨架)
+    if session.get("role") != 10:
+        abort(403)
     return render_template("connections.html")
 
 
@@ -148,6 +153,7 @@ def api_test():
         addrinfo = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return _fail("地址解析失败，请检查服务器地址")
+    safe_ip = None
     for info in addrinfo:
         try:
             ip = ipaddress.ip_address(info[4][0])
@@ -162,9 +168,17 @@ def api_test():
         if (ip.is_private or ip.is_loopback or ip.is_link_local
                 or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
             return _fail("不允许连接内网或本地地址")
+        if safe_ip is None:
+            # DNS rebinding 防护:记录首个通过校验的 IP,后续 create_connection
+            # 直接用该 IP 而非 host,避免二次 getaddrinfo 时 DNS 记录被切换到内网
+            safe_ip = info[4][0]
+    if not safe_ip:
+        return _fail("地址解析失败，请检查服务器地址")
+    # IPv6 字面量在 create_connection 中需要用元组 (host, port) 形式且不需要方括号
+    # (socket.create_connection 内部会处理 IPv6 地址格式),故直接用 safe_ip
     try:
-        # getaddrinfo 会解析 IPv4/IPv6/主机名；超时 5s
-        sock = socket.create_connection((host, port), timeout=5)
+        # 直接连接已校验的 IP,跳过 socket 内部二次 DNS,彻底阻断 rebinding 窗口
+        sock = socket.create_connection((safe_ip, port), timeout=5)
         sock.close()
         return _ok({"latency_ms": 0, "reachable": True})
     except socket.timeout:
@@ -175,9 +189,11 @@ def api_test():
         return _fail("地址解析失败，请检查服务器地址")
     except OSError as e:
         # 不回显 e.strerror（可能泄露内部网络环境细节如 DNS 错误形态），仅记日志
+        # host 拼入日志前 sanitize 防注入(虽已 strip+255 长度限制,仍统一兜底)
         try:
-            from app.log_service import log_service
-            log_service.warn(f"连接测试失败 {host}:{port}: {e}", "CONN")
+            log_service.warn(
+                f"连接测试失败 {log_service.sanitize_for_log(host)}:{port}: {e}", "CONN"
+            )
         except Exception:
             pass
         return _fail("连接失败，请稍后重试")

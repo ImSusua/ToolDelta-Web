@@ -29,6 +29,25 @@ def _redact(message):
     )
     return message
 
+
+# 日志注入防护:替换换行/制表等控制字符为 ?
+# 用户控制的字符串(plugin name / filename / host / detail 等)拼入 audit 日志前
+# 必须先经此函数,防止 \n 伪造日志行干扰审计追责、嫁祸他人或隐藏真实操作。
+# 与 routes/auth.py:_sanitize_for_log 保持一致,统一在此模块导出供所有 blueprint 复用。
+_CTRL_CHAR_RE = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def sanitize_for_log(s):
+    """日志注入防护:把控制字符替换为 ?,防止伪造审计日志行。
+
+    所有 blueprint 的 audit() 函数在拼入用户可控字段(name/filename/host/path/detail)
+    前应调用此函数,与 routes/auth.py 既有的 _sanitize_for_log 行为一致。"""
+    if not isinstance(s, str):
+        if s is None:
+            return ""
+        s = str(s)
+    return _CTRL_CHAR_RE.sub('?', s)
+
 class LogService:
     # 内存中当日日志行数上限，超出滚动截断，防止长期运行内存泄漏（P1-4）
     MAX_LOG_LINES = 5000

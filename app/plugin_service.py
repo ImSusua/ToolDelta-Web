@@ -18,6 +18,8 @@ from app.market_service import market_service
 import requests
 from requests.adapters import HTTPAdapter
 
+from app.log_service import log_service
+
 try:
     # 抑制关闭 verify 后的 InsecureRequestWarning
     from urllib3.exceptions import InsecureRequestWarning
@@ -387,7 +389,13 @@ class PluginService:
         try:
             shutil.copytree(src_dir, target)
         except Exception as e:
-            return False, f"复制插件失败: {e}"
+            # 异常详情记日志,对客户端只返回通用消息,避免 str(e) 泄露服务器绝对路径/
+            # 权限错误形态等(与 routes/api.py:_internal_error 一致策略)
+            try:
+                log_service.error(f"安装预设插件失败 src={src_dir} target={target}: {e}", "PLUGIN")
+            except Exception:
+                pass
+            return False, "复制插件失败,请查看日志"
         return True, plugin_name
 
     def install_preset_plugins_batch(self, plugin_ids):
@@ -500,7 +508,13 @@ class PluginService:
                             f.write(chunk)
             return True, plugin_name
         except Exception as e:
-            return False, str(e)
+            # 异常详情记日志,对客户端只返回通用消息,避免 str(e) 泄露内部网络环境/
+            # DNS 错误形态/服务器路径(与 routes/api.py:_internal_error 一致策略)
+            try:
+                log_service.error(f"网络安装插件失败 url={market_url} pid={plugin_id}: {e}", "PLUGIN")
+            except Exception:
+                pass
+            return False, "安装失败,请查看日志"
 
     def _unfold_dict(self, d, prefix, result):
         """把 directory_tree.json 的嵌套文件树展开为相对路径列表。

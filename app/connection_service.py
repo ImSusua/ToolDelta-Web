@@ -22,6 +22,18 @@ def init_app(app):
     global _FILE
     _FILE = os.path.join(app.instance_path, "server_conn.json")
     os.makedirs(os.path.dirname(_FILE), exist_ok=True)
+    # 目录权限收敛:同 instance/secret_key、logs/ 一致,仅本用户可访问
+    # (server_conn.json 含 Minecraft 服务器连接 token 明文,同主机其他用户不应读取)
+    try:
+        os.chmod(os.path.dirname(_FILE), 0o700)
+    except OSError:
+        pass
+    # 既有 server_conn.json 权限收敛:旧文件可能仍是默认 0o644
+    if os.path.isfile(_FILE):
+        try:
+            os.chmod(_FILE, 0o600)
+        except OSError:
+            pass
 
 
 def _read_all():
@@ -54,6 +66,12 @@ def _write_all(conns):
             os.fsync(f.fileno())
         os.replace(tmp, _FILE)
         tmp = None  # 标记已成功 replace，finally 不再删除
+        # 收敛权限:含 Minecraft 服务器连接 token,同主机其他用户不可读
+        # (与 auth_service.user.json、config.py.secret_key 保持一致)
+        try:
+            os.chmod(_FILE, 0o600)
+        except OSError:
+            pass
     finally:
         if tmp is not None and os.path.exists(tmp):
             try:

@@ -1,7 +1,7 @@
 import os
 import re
 import shutil
-from flask import Blueprint, request, jsonify, send_file, session, after_this_request
+from flask import Blueprint, request, jsonify, send_file, session, after_this_request, current_app
 from werkzeug.utils import secure_filename
 from app.log_service import log_service
 from config import Config
@@ -34,9 +34,20 @@ _UPLOAD_BLOCKED_EXTS = {
 }
 
 def audit(action, detail=""):
-    user = session.get("username", "?")
-    ip = request.remote_addr or "?"
-    log_service.info(f"[{user}@{ip}] {action} {detail}", "AUDIT")
+    # 用户名/详情统一过滤控制字符,防止 raw 路径参数含 \n 伪造审计日志行(日志注入)
+    # 复用 log_service.sanitize_for_log 与 routes/auth.py:_sanitize_for_log 行为一致
+    user = log_service.sanitize_for_log(session.get("username", "?"))
+    ip = _client_ip()
+    log_service.info(f"[{user}@{ip}] {action} {log_service.sanitize_for_log(detail)}", "AUDIT")
+
+def _client_ip():
+    """获取客户端真实 IP:反代场景下取 X-Forwarded-For 最左值,
+    与 routes/auth.py:_client_ip 行为一致,避免所有审计日志记录为反代 IP。"""
+    if current_app.config.get("BEHIND_PROXY"):
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.remote_addr or "?"
 
 def ok(data=None):
     r = {"success": True}

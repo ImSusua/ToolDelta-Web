@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, render_template, request, jsonify, session, abort
 
 from app.watchdog_service import watchdog_service
 
@@ -13,6 +13,10 @@ def _admin_required():
 
 @bp.route("/watchdog")
 def watchdog_page():
+    # 看门狗页面入口要求管理员:与 console.py 一致,
+    # 普通用户进入后 enable/disable/set API 返回 403,提前拦截避免空白页
+    if session.get("role") != 10:
+        abort(403)
     return render_template("watchdog.html")
 
 

@@ -1,8 +1,40 @@
 import time
 import threading
-from flask import request
-from flask_socketio import emit
+from flask import request, session
+from flask_socketio import emit, disconnect
 from app.tooldelta_manager import tooldelta_manager, ansi_to_html, escape_html
+from app import auth_service
+
+
+def _session_valid(require_admin=True):
+    """校验当前 socket 会话是否有效。
+
+    补齐 HTTP 层 before_request 的 session_version 校验:被删除/改密的管理员
+    旧 cookie 仍带 authenticated=True/role=10,但 session_version 已过期。
+    HTTP 请求每次都走 before_request 重新校验,WebSocket 长连接却只在 connect
+    时校验一次,后续事件只读 cookie,会使被吊销的管理员在 8h 会话期内仍能
+    通过既有连接操控面板。这里在每个事件入口集中校验,与 HTTP 层对齐。
+
+    返回 (ok, error_emit_or_None):
+      - ok=True: 通过,可继续执行业务
+      - ok=False: 拒绝,且已调用 disconnect()/emit() 反馈,调用方应直接 return
+    """
+    if not session.get("authenticated"):
+        disconnect()
+        return False, None
+    if require_admin and session.get("role") != 10:
+        return False, None
+    # session_version 校验:用户被删/改密/重置密码后 session_version 递增,
+    # cookie 中的旧版本号失效,强制断开该长连接
+    ses_user = session.get("username", "")
+    ses_ver = session.get("session_version")
+    if ses_user and ses_ver is not None:
+        cur_ver = auth_service.get_user_session_version(ses_user)
+        if cur_ver is None or cur_ver != ses_ver:
+            session.clear()
+            disconnect()
+            return False, None
+    return True, None
 
 # 命令发送频率限制：同一客户端 1 秒内最多 10 条，防止刷屏/暴力输入（P2-7）
 # 用 sid（Socket.IO 连接 id）作为 key 而非 remote_addr：反代/容器部署下所有请求
@@ -46,22 +78,24 @@ def init_socketio(socketio):
         # 鉴权：未登录或非管理员的 WebSocket 连接直接断开，防止未授权访问控制台
         # 控制台输出可能含 token/路径/堆栈等敏感信息，仅管理员可访问（与 /api/tool/output 一致）
         # fail-closed：会话校验异常（含未登录）一律拒绝连接，避免误放行
-        from flask import session
-        from flask_socketio import disconnect
+        # return False 是 Flask-SocketIO 拒绝连接的官方方式（仅 disconnect() 在
+        # 函数体末尾会依赖框架隐式行为，未来若追加逻辑可能在已拒绝的连接上误执行）
         if not session.get("authenticated") or session.get("role") != 10:
-            disconnect()
+            return False
+        # session_version 校验:cookie 可能是改密/删用户前的旧值,校验后才允许建连
+        ses_user = session.get("username", "")
+        ses_ver = session.get("session_version")
+        if ses_user and ses_ver is not None:
+            cur_ver = auth_service.get_user_session_version(ses_user)
+            if cur_ver is None or cur_ver != ses_ver:
+                session.clear()
+                return False
 
     @socketio.on("console_command")
     def handle_command(data):
-        from flask import session
-        from flask_socketio import disconnect
-        # per-event 鉴权：长连接期间 session 可能过期
-        if not session.get("authenticated"):
-            disconnect()
-            return
-        # 命令发送需管理员权限，与 /api/tool/command HTTP 端点保持一致
-        if session.get("role") != 10:
-            emit("console_output", {"type": "system", "data": "无权限发送命令（需管理员）", "data_html": "无权限发送命令（需管理员）"})
+        # per-event 鉴权 + session_version 校验:长连接期间 session 可能过期或被吊销
+        ok, _ = _session_valid(require_admin=True)
+        if not ok:
             return
         # 兼容字符串与 {"cmd": "..."} / {"command": "..."} 两种前端格式
         if isinstance(data, dict):
@@ -131,22 +165,17 @@ def init_socketio(socketio):
 
     @socketio.on("install_dependencies")
     def handle_install_dependencies():
-        from flask import session
-        from flask_socketio import disconnect
-        if not session.get("authenticated"):
-            disconnect()
-            return
-        # 依赖安装需管理员权限，与 /api/dependencies/install HTTP 端点保持一致
-        if session.get("role") != 10:
-            emit("console_output", {"type": "system", "data": "无权限安装依赖（需管理员）", "data_html": "无权限安装依赖（需管理员）"})
+        # 依赖安装需管理员权限 + session_version 校验,与 /api/dependencies/install 一致
+        ok, _ = _session_valid(require_admin=True)
+        if not ok:
             return
         return dependency_service.start_install()
 
     @socketio.on("get_dependency_status")
     def handle_get_dependency_status():
-        from flask import session
-        from flask_socketio import disconnect
-        if not session.get("authenticated"):
-            disconnect()
+        # 与 install_dependencies 鉴权保持一致:get_status 返回 log_tail/mirror_url
+        # 等可能含内部路径的字段,仅管理员可读(原仅校验 authenticated,这里补齐 role)
+        ok, _ = _session_valid(require_admin=True)
+        if not ok:
             return
         return dependency_service.get_status()

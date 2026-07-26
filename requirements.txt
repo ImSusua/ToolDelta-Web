@@ -1,3 +1,9 @@
-flask>=3.0
-flask-socketio>=5.3
-requests>=2.32
+# 依赖版本约束策略:
+# - 下界覆盖已知 CVE 修复版本(CVE-2024-34069 Flask / CVE-2024-49767 Werkzeug /
+#   CVE-2024-35195 requests 等),详见各包安全公告
+# - 上界钉主版本号,防止破坏性升级(如 Flask 4.0、Werkzeug 4.0)
+# - werkzeug 显式 pin:transitive dependency 不被 Flask 锁定时可能拉到有漏洞版本
+flask>=3.0.8,<4
+flask-socketio>=5.3,<6
+werkzeug>=3.0.6,<4
+requests>=2.32.0,<3

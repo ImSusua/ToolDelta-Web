@@ -117,11 +117,13 @@
     {% if wallpaper_url %}<div class="wallpaper-bg"></div>
     <script>
       // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
+      // 纵深防御:即便后端 wallpaper_service.save() 已拦截单引号,这里再前端兜底
+      // 转义单引号/双引号/反斜杠,防止 backgroundImage 表达式被构造 CSS 注入
       (function(){
         var wUrl = {{ wallpaper_url|tojson }};
         if (wUrl) {
           var el = document.querySelector('.wallpaper-bg');
-          if (el) el.style.backgroundImage = "url('" + wUrl + "')";
+          if (el) el.style.backgroundImage = "url('" + String(wUrl).replace(/['"\\]/g, encodeURIComponent) + "')";
         }
       })();
     </script>
