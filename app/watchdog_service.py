@@ -164,6 +164,9 @@ class WatchdogService:
                     return False
                 if v < 1:
                     return False
+                # 上界：防止 check_interval=10**15 让看门狗几乎永不检查
+                if v > 86400:
+                    return False
                 cfg["check_interval"] = v
             if "auto_restart" in payload:
                 if not isinstance(payload["auto_restart"], bool):
@@ -176,6 +179,9 @@ class WatchdogService:
                     return False
                 if v < 0:
                     return False
+                # 上界：防止 max_restarts=10**15 让进程被反复 kill-重启无限循环
+                if v > 1000:
+                    return False
                 cfg["max_restarts"] = v
             if "restart_cooldown" in payload:
                 try:
@@ -183,6 +189,9 @@ class WatchdogService:
                 except (TypeError, ValueError):
                     return False
                 if v < 0:
+                    return False
+                # 上界：防止 restart_cooldown=10**15 让一次失败后永久不再重启，等同禁用
+                if v > 86400:
                     return False
                 cfg["restart_cooldown"] = v
             self._config = cfg

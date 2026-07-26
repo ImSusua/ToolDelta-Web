@@ -31,10 +31,15 @@ def _is_safe_url(url):
     if not host:
         return False
     # 解析 IP 并阻止内网地址，比硬编码规则更全面（覆盖 10/172/127/169.254 等）
+    # 与 app/routes/api.py:_is_safe_url 保持一致的判定范围：
+    # is_private 仅覆盖 10/172.16-31/192.168，IPv6 场景下 ::（unspecified）在某些
+    # Python 版本 is_private 返回 False，必须额外用 is_unspecified 拦截，否则可绕过。
     try:
         addrinfo = socket.getaddrinfo(host, None)
         for info in addrinfo:
-            if ip_address(info[4][0]).is_private:
+            ip = ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
                 return False
     except Exception:
         return False
@@ -63,7 +68,15 @@ def fetch_new():
     url = "https://cdn.8845.top/api/limo?orientation=pc"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        # 禁止自动跟随重定向：urllib 默认会跟随 3xx 跳转。
+        # _is_safe_url 只校验最终 URL，若 CDN 被劫持返回 302 → http://169.254.169.254/，
+        # urllib 会先打到内网再返回 final_url，存在 TOCTOU：实际请求已发往内网地址。
+        # 自定义 opener 拦截所有 HTTPRedirectHandler，遇到 3xx 直接抛异常终止。
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None  # 返回 None 阻止重定向，urllib 会抛 HTTPError
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(req, timeout=8) as resp:
             final_url = resp.geturl()
         if final_url and _is_safe_url(final_url):
             save(final_url)

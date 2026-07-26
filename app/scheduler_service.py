@@ -77,12 +77,25 @@ class SchedulerService:
 
     def _write_locked(self):
         # 原子写：先写临时文件再替换，避免写一半崩溃导致数据丢失
+        # try/finally 确保异常路径清理 tmp：json.dump/open 抛异常时 os.replace 不会执行，
+        # tmp 残留为 scheduler.json.tmp（固定名，会被下次覆盖但仍属未清理）。
+        # 同时补充 flush/fsync 保证数据真正落盘，与 watchdog/connection/wallpaper 一致。
         if not self._data_path:
             return
         tmp = self._data_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self._jobs, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, self._data_path)
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._jobs, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._data_path)
+            tmp = None  # 标记已成功 replace，finally 不再删除
+        finally:
+            if tmp is not None and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     @staticmethod
     def _normalize_job(job):
@@ -121,8 +134,14 @@ class SchedulerService:
 
         if not name or not str(name).strip():
             raise ValueError("任务名称不能为空")
+        # 长度上限：防止超大字符串撑爆 scheduler.json 落盘 + list_jobs 全量回传前端
+        if len(str(name)) > 64:
+            raise ValueError("任务名称不能超过 64 字符")
         if not command or not str(command).strip():
             raise ValueError("命令不能为空")
+        # 与 tooldelta_manager.MAX_COMMAND_LEN=8192 对齐，防止超大命令撑爆持久化文件
+        if len(str(command)) > 8192:
+            raise ValueError("命令长度不能超过 8192 字符")
         if type_ not in ("interval", "daily"):
             raise ValueError("任务类型不合法（应为 interval 或 daily）")
 
@@ -139,6 +158,9 @@ class SchedulerService:
                 raise ValueError("间隔秒数（interval）必须是整数")
             if interval < 1:
                 raise ValueError("间隔秒数（interval）必须 >= 1")
+            # 上界：防止 interval=10**18 让 next_run 计算溢出，且无意义（1 年以上）
+            if interval > 86400 * 365:
+                raise ValueError("间隔秒数不能超过 1 年（31536000 秒）")
             job["interval"] = interval
             job["hour"] = None
             job["minute"] = None

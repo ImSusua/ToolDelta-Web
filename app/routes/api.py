@@ -111,6 +111,9 @@ def tool_output():
     if session.get("role") != 10:
         return jsonify({"success": False, "error": "无权限"})
     tail = request.args.get("tail", 200, type=int)
+    # 上界：防止 tail=10000000 让 get_output 对整段 buffer 跑 ansi_to_html 造成 CPU 飙升
+    if tail > 500:
+        tail = 500
     as_html = request.args.get("html", "0") == "1"
     return jsonify({"lines": tooldelta_manager.get_output(tail, as_html=as_html)})
 
@@ -208,6 +211,15 @@ def save_plugin_config():
     name, config = data.get("name"), data.get("config")
     if not name or not config:
         return jsonify({"success": False, "error": "缺少参数"})
+    # 类型校验：config 必须是 dict，避免任意类型（list/str/巨型 JSON）撑爆磁盘
+    if not isinstance(config, dict):
+        return jsonify({"success": False, "error": "config 必须是 JSON 对象"})
+    # 大小校验：序列化后不超过 1MB，防止巨型 JSON 撑爆 cfg/{name}.json
+    try:
+        if len(json.dumps(config, ensure_ascii=False)) > 1024 * 1024:
+            return jsonify({"success": False, "error": "配置内容过大（超过 1MB）"})
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "config 序列化失败"})
     plugin_service.save_plugin_config(name, config)
     return jsonify({"success": True})
 
@@ -216,6 +228,10 @@ def plugin_data_files():
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "缺少插件名"})
+    # 与 /api/plugins/config 对齐：插件数据文件清单可能含敏感文件名（fbtoken 缓存、凭据文件），
+    # 普通用户枚举后可辅助后续定向攻击，仅管理员可读
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     return jsonify(plugin_service.get_plugin_data_files(name))
 
 @bp.route("/plugins/data-upload", methods=["POST"])
@@ -281,6 +297,16 @@ def install_preset_batch():
         return jsonify({"success": False, "error": "无权限"})
     data = request.get_json(silent=True) or {}
     ids = data.get("plugin_ids", [])
+    # 类型与长度校验：ids 必须是数组且不超过 200 项，
+    # 防止 None/字符串触发 TypeError 或极大列表（10w 项）触发全量市场扫描造成 CPU/IO DoS
+    if not isinstance(ids, list):
+        return jsonify({"success": False, "error": "plugin_ids 必须是数组"})
+    if len(ids) > 200:
+        return jsonify({"success": False, "error": "plugin_ids 不能超过 200 项"})
+    # 每个元素必须是字符串且长度合理
+    for pid in ids:
+        if not isinstance(pid, str) or not pid or len(pid) > 128:
+            return jsonify({"success": False, "error": "插件 ID 不合法"})
     results = plugin_service.install_preset_plugins_batch(ids)
     return jsonify({"results": results})
 
@@ -358,6 +384,8 @@ def market_plugin_detail():
     pid = request.args.get("id")
     if not pid:
         return jsonify({"error": "缺少插件ID"})
+    # 长度上限：防止超长字符串触发逐项比较浪费 CPU（与 kw/plugin_filter 的 [:128] 一致）
+    pid = pid[:128]
     return jsonify(market_service.get_plugin_data(pid, refresh=True) or {"error": "未找到"})
 
 # ─── 命令扫描 ────────────────────────
@@ -455,6 +483,10 @@ def remove_favorite():
 
 @bp.route("/backups")
 def list_backups():
+    # 与 /api/backup/create|restore|delete 对齐：备份元数据（文件名/时间/备注）
+    # 可辅助社工或定向破坏，仅管理员可读
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"}), 403
     return jsonify(backup_service.list_backups())
 
 @bp.route("/backup/create", methods=["POST"])
@@ -645,5 +677,11 @@ def save_fbtoken():
     token_path = os.path.join(td_dir, "fbtoken")
     with open(token_path, "w", encoding="utf-8") as f:
         f.write(token)
+    # 文件权限加固：fbtoken 是 ToolDelta 接入 MC 服务器的高危凭据，
+    # 默认 0o644 同主机其他普通用户可读取。设为 0o600 仅本用户可读写。
+    try:
+        os.chmod(token_path, 0o600)
+    except OSError:
+        pass
     audit("更新 fbtoken")
     return jsonify({"success": True})

@@ -260,7 +260,17 @@ class PluginService:
         # 兜底校验落点在 data_dir 内，防止文件名遍历写越权（P0-2）
         if not os.path.abspath(path).startswith(os.path.abspath(data_dir) + os.sep):
             return False
+        # 文件大小校验：与 routes/files.py upload_file 一致 50MB 上限，
+        # content_length 可能不可靠，保存后再兜底校验
+        if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
+            return False
         file.save(path)
+        if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return False
         return True
 
     def delete_data_file(self, name, filename):
@@ -291,7 +301,16 @@ class PluginService:
         # 兜底校验落点在 cfg_dir 内，防止文件名遍历写越权（P0-3）
         if not os.path.abspath(path).startswith(os.path.abspath(cfg_dir) + os.sep):
             return False
+        # 文件大小校验：与 upload_data_file 一致
+        if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
+            return False
         file.save(path)
+        if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return False
         return True
 
     def install_preset_plugin(self, plugin_id):

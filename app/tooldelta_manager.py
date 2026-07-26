@@ -348,12 +348,21 @@ class ToolDeltaManager:
             if names and "/" in names[0]:
                 top = names[0].split("/", 1)[0] + "/"
             os.makedirs(td_dir, exist_ok=True)
+            abs_td_dir = os.path.abspath(td_dir)
             with zipfile.ZipFile(zip_path) as z:
                 for info in z.infolist():
                     rel = info.filename[len(top):] if (top and info.filename.startswith(top)) else info.filename
                     if not rel:
                         continue
-                    dest = os.path.join(td_dir, rel)
+                    # zip slip 防护：拒绝绝对路径与 .. 遍历，校验解压落点在 td_dir 内。
+                    # 虽然出厂包来自可信配置 TOOLDELTA_SOURCE_ZIP，但若出厂包被替换/篡改
+                    # （如通过 backup_service.reset_to_factory 用伪造 zip 重置），可向任意
+                    # 路径写文件实现 RCE。与 plugin_service.upload_plugin / backup_service.restore_backup 对齐。
+                    if os.path.isabs(rel) or ".." in rel.replace("\\", "/").split("/"):
+                        raise ValueError("出厂包包含非法路径: " + info.filename)
+                    dest = os.path.normpath(os.path.join(td_dir, rel))
+                    if dest != abs_td_dir and not dest.startswith(abs_td_dir + os.sep):
+                        raise ValueError("出厂包路径越权: " + info.filename)
                     if info.filename.endswith("/"):
                         os.makedirs(dest, exist_ok=True)
                     else:

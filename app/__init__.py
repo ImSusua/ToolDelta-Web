@@ -45,8 +45,13 @@ def create_app():
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0 if _flask_env == "development" else 31536000
     app.config["SESSION_PERMANENT"] = True
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
-    # 安全 cookie：默认 False 保持本地/HTTP 开发可用，生产环境可通过环境变量强制 HTTPS
-    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+    # 安全 cookie：生产环境（FLASK_ENV 非 development）默认强制 Secure，
+    # 防止会话 cookie 在 HTTP 上明文传输被中间人嗅探劫持。
+    # 开发环境（FLASK_ENV=development）默认关闭以便本地 HTTP 调试，
+    # 仍可通过显式设置 SESSION_COOKIE_SECURE=1 强制开启。
+    _is_prod = _flask_env != "development"
+    _secure_default = "true" if _is_prod else "false"
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", _secure_default).lower() in ("1", "true", "yes")
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
@@ -121,7 +126,11 @@ def create_app():
         # 已配置后不应再访问 setup 页面，避免误操作重新初始化
         if auth_svc.is_configured() and (path == "/setup" or path.startswith("/api/setup")):
             return redirect("/")
-        allowed_prefixes = ["/login", "/setup", "/api/login", "/api/setup", "/api/reset-panel", "/logout", "/static/"]
+        # 注意：/api/reset-panel 不在白名单中。
+        # reset-panel 是高危重置操作（清空所有账号配置），必须在全局登录态校验通过后
+        # 再由路由层做 role==10 + 密码二次确认。若放入白名单，路由层校验一旦被改松或误删，
+        # 全局层不会兜底，攻击者可未登录触发重置。纵深防御：先过全局认证，再做高危校验。
+        allowed_prefixes = ["/login", "/setup", "/api/login", "/api/setup", "/logout", "/static/"]
         if any(path == p or path.startswith(p) for p in allowed_prefixes):
             return
         if not auth_svc.is_configured():

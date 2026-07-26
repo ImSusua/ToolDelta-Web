@@ -109,6 +109,10 @@ def list_files():
         return fail("路径不存在")
     if os.path.isfile(full):
         return fail("路径不是目录")
+    # 符号链接校验：与 /read /save /download /search 一致，防止列出符号链接指向的
+    # 外部目录（如 /etc）内容，泄露敏感文件名信息
+    if not _is_real_path(full):
+        return fail("目录包含越权符号链接")
     try:
         entries = []
         names = sorted(os.listdir(full), key=lambda x: (not os.path.isdir(os.path.join(full, x)), x.lower()))
@@ -171,6 +175,12 @@ def save_file():
         return fail("路径不允许")
     if full != ALLOWED_ROOT and not full.startswith(ALLOWED_ROOT + os.sep):
         return fail("路径不允许")
+    # 符号链接校验：与同 blueprint 的 /read /upload /delete /move /copy 保持一致。
+    # safe_path 仅用 normpath 校验，不解析符号链接。若 ALLOWED_ROOT 下存在符号链接
+    # （如通过插件 zip 上传时 z.extractall 保留符号链接属性创建），管理员可通过 /save
+    # 写入符号链接指向的任意文件（如 /etc/passwd），形成完整越权写攻击链。
+    if not _is_real_path(full):
+        return fail("路径包含越权符号链接")
     # 限制单文件保存大小，防止内存/磁盘被拖垮（P2-2）
     if len(content) > 10 * 1024 * 1024:
         return fail("文件内容超过 10MB 上限")
@@ -292,6 +302,9 @@ def rename_item():
     full = safe_path(raw)
     if not full or not os.path.exists(full):
         return fail("路径不存在")
+    # 符号链接校验：与 /move /copy /delete 一致，防止通过符号链接重命名外部文件
+    if not _is_real_path(full):
+        return fail("路径包含越权符号链接")
     parent = os.path.dirname(full)
     dest = os.path.join(parent, new_name)
     # 目标也必须落在允许根目录内

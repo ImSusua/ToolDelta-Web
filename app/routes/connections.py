@@ -125,6 +125,7 @@ def api_test():
     if err:
         return err
     import socket
+    import ipaddress
     data = request.get_json(silent=True) or {}
     host = (data.get("host") or "").strip()
     port = data.get("port")
@@ -139,16 +140,44 @@ def api_test():
     # 限制 hostname 长度，防止超长输入
     if len(host) > 255:
         return _fail("地址过长")
+    # SSRF 防护：与 api.py:_is_safe_url / plugin_service.install_network_plugin 同源拦截。
+    # 旧实现仅校验端口与长度，未拦截内网地址，管理员（或被劫持的管理员 session）
+    # 可探测 127.0.0.1:6379（Redis）、169.254.169.254:80（云元数据）、10.0.0.x 等内网服务。
+    # 即便只做 TCP 三次握手不发协议数据，仍可探测端口存活与内网拓扑。
+    try:
+        addrinfo = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return _fail("地址解析失败，请检查服务器地址")
+    for info in addrinfo:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        # is_private 仅覆盖 10/172.16-31/192.168，必须额外拦截：
+        # - is_loopback: 127.0.0.0/8（可探测本机服务）
+        # - is_link_local: 169.254.0.0/16（云元数据 169.254.169.254）
+        # - is_reserved: 0.0.0.0/8、240.0.0.0/4 等
+        # - is_multicast: 224.0.0.0/4
+        # - is_unspecified: 0.0.0.0 / :: （IPv6 未指定地址）
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return _fail("不允许连接内网或本地地址")
     try:
         # getaddrinfo 会解析 IPv4/IPv6/主机名；超时 5s
         sock = socket.create_connection((host, port), timeout=5)
         sock.close()
         return _ok({"latency_ms": 0, "reachable": True})
     except socket.timeout:
-        return _fail(f"连接超时（5s）: {host}:{port}")
+        return _fail("连接超时（5s），请检查服务器地址与端口")
     except ConnectionRefusedError:
-        return _fail(f"连接被拒绝: {host}:{port}（服务器未启动或端口错误）")
-    except socket.gaierror as e:
-        return _fail(f"地址解析失败: {host}（{e.strerror or 'unknown host'}）")
+        return _fail("连接被拒绝（服务器未启动或端口错误）")
+    except socket.gaierror:
+        return _fail("地址解析失败，请检查服务器地址")
     except OSError as e:
-        return _fail(f"连接失败: {host}:{port}（{e.strerror or str(e)}）")
+        # 不回显 e.strerror（可能泄露内部网络环境细节如 DNS 错误形态），仅记日志
+        try:
+            from app.log_service import log_service
+            log_service.warn(f"连接测试失败 {host}:{port}: {e}", "CONN")
+        except Exception:
+            pass
+        return _fail("连接失败，请稍后重试")

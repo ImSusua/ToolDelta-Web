@@ -39,12 +39,25 @@ def _write(users):
 
 def _write_locked(users):
     # 原子写：先写临时文件再替换，避免写一半崩溃导致用户数据丢失
+    # try/finally 确保异常路径清理 tmp：json.dump/open 抛异常时 os.replace 不会执行，
+    # tmp 残留为 user.json.tmp（固定名，会被下次覆盖但仍属未清理）。
+    # 同时补充 flush/fsync 保证数据真正落盘，与 scheduler/watchdog/connection/wallpaper 一致。
     if not USER_FILE:
         return
     tmp = USER_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, USER_FILE)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(users, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, USER_FILE)
+        tmp = None  # 标记已成功 replace，finally 不再删除
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 # 用户名规则：字母/数字/下划线/连字符/中文，长度 1-32，避免控制字符或路径遍历（P1-2）
 # 支持中文（CJK统一表意文字范围），不允许全为空白或纯标点

@@ -51,13 +51,26 @@ class BackupService:
         total_size = 0
         file_count = 0
         items = []
+        abs_td_dir = os.path.abspath(td_dir)
         for folder in self._BACKUP_FOLDERS:
             src = os.path.join(td_dir, folder)
             if not os.path.isdir(src):
                 continue
+            abs_src = os.path.abspath(src)
             for root, dirs, files in os.walk(src):
+                # os.walk 默认 followlinks=False 不递归进入符号链接子目录，
+                # 但 os.path.getsize / z.write 会跟随文件符号链接。
+                # 若 td_dir 下存在指向 /etc/shadow 的符号链接，备份包会包含其内容。
+                # 校验每个 fp 的 realpath 仍在 src 内，跳过越权符号链接。
                 for f in files:
                     fp = os.path.join(root, f)
+                    try:
+                        real_fp = os.path.realpath(fp)
+                        if real_fp != abs_src and not real_fp.startswith(abs_src + os.sep):
+                            # 符号链接逃逸出 src 目录，跳过避免备份外部文件
+                            continue
+                    except OSError:
+                        continue
                     try:
                         total_size += os.path.getsize(fp)
                     except OSError:
@@ -168,12 +181,20 @@ class BackupService:
         try:
             _make_snapshot()
         except ValueError as e:
+            # _make_snapshot 失败时 snapshot_path 可能是部分写入的 zip 残留磁盘，
+            # 必须在此显式清理，否则多次失败累积多个 __pre_restore_*.zip 文件
+            try:
+                if os.path.isfile(snapshot_path):
+                    os.remove(snapshot_path)
+            except OSError:
+                pass
             return False, f"当前数据过大，无法创建恢复前快照: {e}"
 
-        temp = os.path.join(backup_dir, "__restore_temp__")
-        if os.path.isdir(temp):
-            shutil.rmtree(temp)
-        os.makedirs(temp, exist_ok=True)
+        # 用 tempfile.mkdtemp 替代固定目录名 __restore_temp__：
+        # 固定名在两个恢复操作并发时会互相覆盖——A 还在解压时 B 的 rmtree 会删掉
+        # A 的中间产物。mkdtemp 每次生成唯一目录名，并发互不干扰。
+        import tempfile
+        temp = tempfile.mkdtemp(prefix="__restore_", dir=backup_dir)
         try:
             with zipfile.ZipFile(zip_path, "r") as z:
                 # 防御 zip slip：拒绝绝对路径、..、以及解压后超出 temp 的条目
@@ -277,12 +298,20 @@ class BackupService:
         os.makedirs(td_dir, exist_ok=True)
 
         # 2) 解压出厂包到 TOOLDELTA_DIR（去除顶层目录前缀）
+        abs_td_dir = os.path.abspath(td_dir)
         with zipfile.ZipFile(zip_path) as z:
             for info in z.infolist():
                 rel = info.filename[len(top):] if top and info.filename.startswith(top) else info.filename
                 if not rel:
                     continue
-                dest = os.path.join(td_dir, rel)
+                # zip slip 防护：与 restore_backup 回滚分支、plugin_service.upload_plugin 对齐。
+                # 出厂包虽来自可信配置，但 defense-in-depth：若出厂包被替换/篡改，
+                # 无此校验可向任意路径写文件实现 RCE。
+                if os.path.isabs(rel) or ".." in rel.replace("\\", "/").split("/"):
+                    return False, "出厂包包含非法路径: " + info.filename
+                dest = os.path.normpath(os.path.join(td_dir, rel))
+                if dest != abs_td_dir and not dest.startswith(abs_td_dir + os.sep):
+                    return False, "出厂包路径越权: " + info.filename
                 if info.filename.endswith("/"):
                     os.makedirs(dest, exist_ok=True)
                 else:
