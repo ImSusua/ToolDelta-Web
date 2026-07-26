@@ -5,6 +5,30 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+# 日志脱敏正则:拦截常见敏感字段(密码/token/secret/cookie/key/auth 等)的赋值与 JSON 字段,
+# 替换为 ***REDACTED*** 防止 ToolDelta stdout、命令参数、配置打印等把凭据落盘。
+# 同时拦截 Bearer Token 与长 hex/base64 token(典型 32+ 字符)避免泄露 API 凭据。
+# 第 1 组=字段名+分隔符(保留),第 2 组=凭据值(脱敏)。
+_SENSITIVE_PATTERN = re.compile(
+    r'(?i)\b(password|passwd|pwd|token|secret|cookie|set_cookie|api[_-]?key|'
+    r'access[_-]?token|refresh[_-]?token|authorization|session[_-]?id|client[_-]?secret)'
+    r'(["\']?\s*[:=]\s*["\']?)([^\s"\',}]+)'
+)
+_BEARER_PATTERN = re.compile(r'(?i)\b(Bearer\s+)([A-Za-z0-9._\-/+=]+)')
+
+def _redact(message):
+    """对日志 message 做脱敏:替换敏感凭据字段为 ***REDACTED***。
+    仅在落盘前调用,避免 password/token/cookie 等被持久化到 instance/logs/*.log。"""
+    if not isinstance(message, str):
+        message = str(message)
+    message = _SENSITIVE_PATTERN.sub(
+        lambda m: m.group(1) + m.group(2) + "***REDACTED***", message
+    )
+    message = _BEARER_PATTERN.sub(
+        lambda m: m.group(1) + "***REDACTED***", message
+    )
+    return message
+
 class LogService:
     # 内存中当日日志行数上限，超出滚动截断，防止长期运行内存泄漏（P1-4）
     MAX_LOG_LINES = 5000
@@ -30,6 +54,11 @@ class LogService:
     def init_app(self, app):
         self._logs_dir = os.path.join(app.instance_path, "logs")
         os.makedirs(self._logs_dir, exist_ok=True)
+        # 日志目录权限收敛:同主机其他用户不应读取日志内容(可能含敏感字段)
+        try:
+            os.chmod(self._logs_dir, 0o700)
+        except OSError:
+            pass
         self._rotate()
         # 启动时清理超过 MAX_HISTORY_DAYS 天的旧日志，避免长期运行磁盘塞满
         try:
@@ -120,6 +149,9 @@ class LogService:
 
     def _write(self, level, source, message):
         self._rotate()
+        # 落盘前脱敏:拦截 password/token/cookie/Authorization 等敏感字段,
+        # 避免 ToolDelta stdout、命令参数、配置打印等把凭据持久化到 .log 文件
+        message = _redact(message)
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}][{level}][{source}] {message}"
         with self._lock:
@@ -131,9 +163,16 @@ class LogService:
                 # 单文件大小轮转：写之前先检查是否超限，超限则滚动到 .1/.2/...
                 # 避免高频日志（如 ToolDelta stdout 全量 debug）单文件无限增长塞满磁盘
                 self._maybe_rotate_by_size()
+                # 新创建的日志文件收敛权限为 0o600,避免同主机其他用户读取
+                need_chmod = not os.path.isfile(path)
                 try:
                     with open(path, "a", encoding="utf-8") as f:
                         f.write(line + "\n")
+                    if need_chmod:
+                        try:
+                            os.chmod(path, 0o600)
+                        except OSError:
+                            pass
                     # 维护内存中的文件大小缓存：line 长度 + 1（换行符）字节数
                     # 用 len(line.encode('utf-8')) 而非 len(line) 以正确处理中文等多字节字符
                     self._today_size += len(line.encode("utf-8")) + 1

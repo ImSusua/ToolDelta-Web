@@ -2,6 +2,7 @@ import os
 import json
 import time
 import re
+import tempfile
 import threading
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -12,10 +13,22 @@ _lock = threading.Lock()
 
 ROLES = {"admin": 10, "user": 1, "guest": 0}
 
+# 密码哈希算法：scrypt 比 werkzeug 默认的 pbkdf2:sha256 更抗 GPU/ASIC 暴力破解。
+# check_password_hash 会从哈希字符串前缀解析算法,故旧 pbkdf2 哈希仍可验证;
+# 仅新生成/改密时切换为 scrypt,迁移对老用户透明。
+# werkzeug 2.3+ 原生支持 scrypt(项目使用 flask>=3.0,传递依赖 werkzeug>=3.0)。
+HASH_METHOD = "scrypt"
+
 def init_app(app):
     global USER_FILE
     USER_FILE = os.path.join(app.instance_path, "user.json")
     os.makedirs(os.path.dirname(USER_FILE), exist_ok=True)
+    # 既有 user.json 权限收敛:同主机其他用户不应读取密码哈希
+    if os.path.isfile(USER_FILE):
+        try:
+            os.chmod(USER_FILE, 0o600)
+        except OSError:
+            pass
 
 def _read():
     with _lock:
@@ -39,19 +52,24 @@ def _write(users):
 
 def _write_locked(users):
     # 原子写：先写临时文件再替换，避免写一半崩溃导致用户数据丢失
-    # try/finally 确保异常路径清理 tmp：json.dump/open 抛异常时 os.replace 不会执行，
-    # tmp 残留为 user.json.tmp（固定名，会被下次覆盖但仍属未清理）。
-    # 同时补充 flush/fsync 保证数据真正落盘，与 scheduler/watchdog/connection/wallpaper 一致。
+    # 用 tempfile.mkstemp 生成唯一临时文件(而非固定名 user.json.tmp),
+    # 防止未来引入多进程时两个进程同时写 tmp 互相覆盖。
+    # 同时补充 flush/fsync 保证数据真正落盘,与 scheduler/watchdog/connection/wallpaper 一致。
     if not USER_FILE:
         return
-    tmp = USER_FILE + ".tmp"
+    fd, tmp = tempfile.mkstemp(prefix="user.", suffix=".tmp", dir=os.path.dirname(USER_FILE))
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(users, f, indent=2, ensure_ascii=False)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, USER_FILE)
         tmp = None  # 标记已成功 replace，finally 不再删除
+        # 收敛权限:含 password_hash,同主机其他用户不可读
+        try:
+            os.chmod(USER_FILE, 0o600)
+        except OSError:
+            pass
     finally:
         if tmp is not None and os.path.exists(tmp):
             try:
@@ -158,7 +176,7 @@ def setup_user(username, password, role=10):
             return False, "用户名已存在"
         users.append({
             "username": username,
-            "password_hash": generate_password_hash(password),
+            "password_hash": generate_password_hash(password, method=HASH_METHOD),
             "role": role,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "login_at": "",
@@ -180,7 +198,7 @@ def create_user(username, password, role=1):
             return False, "用户名已存在"
         users.append({
             "username": username,
-            "password_hash": generate_password_hash(password),
+            "password_hash": generate_password_hash(password, method=HASH_METHOD),
             "role": role,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "login_at": "",
@@ -208,7 +226,7 @@ def change_password(username, old_password, new_password):
         if old_password is not None:
             if not check_password_hash(target.get("password_hash", ""), old_password):
                 return False, "旧密码错误"
-        target["password_hash"] = generate_password_hash(new_password)
+        target["password_hash"] = generate_password_hash(new_password, method=HASH_METHOD)
         # 递增 session_version：旧 session 中存的版本号失效，before_request 强制踢出
         # 让被改密用户的既有会话立刻失效，避免攻击者窃取的旧 session 在 30 天有效期内继续可用
         target["session_version"] = target.get("session_version", 1) + 1
@@ -224,7 +242,7 @@ def admin_reset_password(username, new_password):
         found = False
         for u in users:
             if u.get("username") == username:
-                u["password_hash"] = generate_password_hash(new_password)
+                u["password_hash"] = generate_password_hash(new_password, method=HASH_METHOD)
                 # 递增 session_version：管理员重置密码后该用户的所有既有 session 立即失效
                 u["session_version"] = u.get("session_version", 1) + 1
                 found = True

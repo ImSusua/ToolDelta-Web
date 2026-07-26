@@ -243,7 +243,12 @@ def ansi_to_html(text):
     return html
 
 def escape_html(text):
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """HTML 转义:补全引号转义以兼容属性上下文。
+    旧实现仅转义 & < >,在 <span>文本</span> 上下文足够,
+    但若未来被用于属性值(data-x="..."、title="..."),未转义的 " ' ` 会触发属性逃逸。
+    """
+    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
 
 def detect_encoding(raw_bytes):
     # 去重，避免 locale 编码与 utf-8 重复探测（P2-8）
@@ -758,10 +763,9 @@ class ToolDeltaManager:
         if len(self.output_buffer) > self.MAX_BUFFER:
             self.output_buffer = self.output_buffer[-self.MAX_BUFFER:]
             self.output_raw_buffer = self.output_raw_buffer[-self.MAX_BUFFER:]
-        # 控制台每行不再写 INFO 日志：避免日志膨胀 + 敏感信息泄露（P1-5）
-        # output_buffer 已缓存最近 MAX_BUFFER 行供 /api/tool/output 查询，
-        # 这里降级为 DEBUG 级别，便于按需排查但不污染默认日志视图。
-        log_service.debug("[ToolDelta] " + cleaned)
+        # 控制台输出不再写日志文件:ToolDelta stdout 可能包含 fbtoken、登录密码、
+        # 连接 token 等敏感字段,即使脱敏正则也无法覆盖所有格式。output_buffer 已缓存
+        # 最近 MAX_BUFFER 行供 /api/tool/output 查询,无需再持久化到磁盘。
         self._broadcast("output", line)
 
     def get_status(self):

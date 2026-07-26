@@ -44,7 +44,12 @@ def create_app():
     _flask_env = os.environ.get("FLASK_ENV", "production").lower()
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0 if _flask_env == "development" else 31536000
     app.config["SESSION_PERMANENT"] = True
-    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+    # 会话有效期 8 小时:这是控制 Minecraft bot 的高权限管理面板,
+    # 30 天有效期使被窃取的 session 长期可用,即使有 session_version 失效机制
+    # 也仅覆盖改密/删除场景。8 小时滚动续期兼顾安全与可用性。
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
+    # 滚动续期:每次请求自动刷新 session 过期时间,只要用户活跃就不会被踢
+    app.config["SESSION_REFRESH_EACH_REQUEST"] = True
     # 安全 cookie：生产环境（FLASK_ENV 非 development）默认强制 Secure，
     # 防止会话 cookie 在 HTTP 上明文传输被中间人嗅探劫持。
     # 开发环境（FLASK_ENV=development）默认关闭以便本地 HTTP 调试，
@@ -53,7 +58,11 @@ def create_app():
     _secure_default = "true" if _is_prod else "false"
     app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", _secure_default).lower() in ("1", "true", "yes")
     app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # SameSite=Strict:Lax 允许顶级 GET 导航跨站携带 cookie,Strict 完全禁止。
+    # 管理面板不需要被外部链接跳入时保持登录态,Strict 更安全
+    # (阻断跨站 GET 触发的 CSRF 残余面,如 <a href=/api/...> 跳转)。
+    # 可通过环境变量显式回退为 Lax(如需支持 OAuth 回调导航)。
+    app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Strict")
 
     from app.routes import main, console, plugins, market, backup, commands, api, logs, auth, files, connections, watchdog, scheduler, dashboard
     app.register_blueprint(main.bp)
@@ -131,7 +140,11 @@ def create_app():
         # 再由路由层做 role==10 + 密码二次确认。若放入白名单，路由层校验一旦被改松或误删，
         # 全局层不会兜底，攻击者可未登录触发重置。纵深防御：先过全局认证，再做高危校验。
         allowed_prefixes = ["/login", "/setup", "/api/login", "/api/setup", "/logout", "/static/"]
-        if any(path == p or path.startswith(p) for p in allowed_prefixes):
+        # 精确匹配或目录前缀(/static/ 末尾已带 /):
+        # 旧实现 path.startswith(p) 会让 /login-foo /login_xxx 等被误放行,
+        # 虽然当前没有这类端点,但若未来新增 /login-callback 等接口会被白名单误盖。
+        # 这里改为 p + "/" 前缀匹配,确保仅匹配目录或精确路径。
+        if any(path == p or (p.endswith("/") and path.startswith(p)) or path.startswith(p + "/") for p in allowed_prefixes):
             return
         if not auth_svc.is_configured():
             if path != "/setup":
@@ -193,8 +206,12 @@ def create_app():
             "base-uri 'self'; "
             "frame-ancestors 'self'"
         )
-        # HSTS:仅在生产环境 HTTPS 部署时启用(通过环境变量控制)
-        if os.environ.get("ENABLE_HSTS", "false").lower() in ("1", "true", "yes"):
+        # HSTS:生产环境(FLASK_ENV != development)默认开启,
+        # 浏览器在有效期内强制 HTTPS,防止首次 HTTP 请求被中间人降级嗅探。
+        # HSTS 仅在浏览器实际通过 HTTPS 访问时生效(反代场景下浏览器看到的是 HTTPS),
+        # 即便后端是 HTTP 也无副作用。开发环境默认关闭,可用 ENABLE_HSTS=1 显式开启。
+        _hsts_default = "true" if _is_prod else "false"
+        if os.environ.get("ENABLE_HSTS", _hsts_default).lower() in ("1", "true", "yes"):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 

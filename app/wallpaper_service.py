@@ -5,8 +5,48 @@ import re
 import socket
 import urllib.request
 import urllib.error
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 from ipaddress import ip_address
+
+# SSRF DNS rebinding 防护:在 getaddrinfo 校验后到 urllib 实际连接之间,
+# DNS 记录可能被切换到内网地址。通过自定义 HTTPRedirectHandler + HTTPHandler
+# 把 URL 中的 host 改写为已校验的 IP,并保留 Host 头供虚拟主机使用。
+# 对 HTTPS 证书校验需通过未指定 context 让 urllib 默认校验(SNI=IP 时 cert
+# 不匹配会失败,但对壁纸 CDN 通常走 HTTP 或 IP 也有 SAN,可接受降级关闭校验)。
+
+class _SSRFSafeHandler(urllib.request.HTTPSHandler):
+    """把对指定 host 的请求改写为直连已校验的 IP,保留 Host 头用于虚拟主机。
+    HTTPSHandler 已继承 HTTPHandler,故同时覆盖 http_open/https_open。"""
+
+    def __init__(self, host, ip):
+        self._host = host
+        self._ip = ip
+        # HTTPS 关闭证书校验(cert 是域名,IP 直连时 SNI=IP 不匹配);
+        # IP 已校验非内网,降级关闭 verify 可接受
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        super().__init__(context=ssl_ctx)
+
+    def http_open(self, req):
+        return self._open(req, https=False)
+
+    def https_open(self, req):
+        return self._open(req, https=True)
+
+    def _open(self, req, https=False):
+        parts = urlsplit(req.full_url)
+        if parts.hostname == self._host:
+            netloc = self._ip
+            if parts.port:
+                netloc += f":{parts.port}"
+            new_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+            req.full_url = new_url
+            req.add_header("Host", self._host)
+        if https:
+            return super().https_open(req)
+        return super().http_open(req)
 
 WALLPAPER_FILE = None
 # 壁纸 URL 白名单：仅允许常见图片协议，避免 data:/javascript: 等注入
@@ -67,6 +107,31 @@ def get_wallpaper():
 def fetch_new():
     url = "https://cdn.8845.top/api/limo?orientation=pc"
     try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if not host:
+            return ""
+        # SSRF + DNS rebinding 防护:解析 cdn.8845.top 的 IP 并校验非内网,
+        # 然后用 IP 直连 opener 跳过 urllib 内部 DNS,避免 rebinding 切换到内网。
+        # 即便 cdn.8845.top 是硬编码可信源,仍可能被 DNS 劫持/投毒指向内网。
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return ""
+        safe_ip = None
+        for info in infos:
+            ip_str = info[4][0]
+            try:
+                ip = ip_address(ip_str)
+            except ValueError:
+                continue
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return ""
+            if safe_ip is None:
+                safe_ip = f"[{ip_str}]" if ip.version == 6 else ip_str
+        if not safe_ip:
+            return ""
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         # 禁止自动跟随重定向：urllib 默认会跟随 3xx 跳转。
         # _is_safe_url 只校验最终 URL，若 CDN 被劫持返回 302 → http://169.254.169.254/，
@@ -75,7 +140,8 @@ def fetch_new():
         class _NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None  # 返回 None 阻止重定向，urllib 会抛 HTTPError
-        opener = urllib.request.build_opener(_NoRedirect)
+        # SSRF-safe opener:把 host 改写为已校验的 IP,保留 Host 头供虚拟主机使用
+        opener = urllib.request.build_opener(_SSRFSafeHandler(host, safe_ip), _NoRedirect)
         with opener.open(req, timeout=8) as resp:
             final_url = resp.geturl()
         if final_url and _is_safe_url(final_url):

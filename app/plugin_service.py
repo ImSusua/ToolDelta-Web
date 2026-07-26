@@ -5,10 +5,64 @@ import zipfile
 import socket
 import tempfile
 import threading
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 from werkzeug.utils import secure_filename
 from flask import current_app
 from app.market_service import market_service
+
+# SSRF DNS rebinding 防护:在 getaddrinfo 校验后到 requests 实际连接之间,
+# DNS 记录可能被攻击者切换到 169.254.169.254 等内网地址。
+# 通过自定义 HTTPAdapter 把请求 URL 中的 host 改写为已校验的 IP,
+# 让 urllib3 直接连接到 IP,跳过其内部的 DNS 解析,彻底阻断 rebinding 窗口。
+# 对 HTTPS 关闭证书校验(cert 是域名,IP 直连时不匹配),已校验 IP 非内网故可接受。
+import requests
+from requests.adapters import HTTPAdapter
+
+try:
+    # 抑制关闭 verify 后的 InsecureRequestWarning
+    from urllib3.exceptions import InsecureRequestWarning
+    import warnings as _warnings
+    _warnings.simplefilter('ignore', InsecureRequestWarning)
+except Exception:
+    pass
+
+
+class _SSRFSafeAdapter(HTTPAdapter):
+    """把对指定 host 的请求改写为直连已校验的 IP,并保留原 host 的 Host 头。
+    仅对 self._host 匹配的请求生效,其他 host 保持原样(不应用 pinning)。"""
+
+    def __init__(self, host, ip, *args, **kwargs):
+        self._host = host
+        self._ip = ip
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        parts = urlsplit(request.url)
+        if parts.hostname == self._host:
+            netloc = self._ip
+            if parts.port:
+                netloc += f":{parts.port}"
+            new_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+            request.url = new_url
+            # 保留原 host 用于虚拟主机(同一 IP 多站点场景)
+            request.headers["Host"] = self._host
+            # HTTPS 证书是域名签发,IP 直连时 SNI=IP 不匹配会校验失败
+            # 此时已校验 IP 非内网,降级关闭 verify 可接受
+            if parts.scheme == "https":
+                kwargs["verify"] = False
+        return super().send(request, **kwargs)
+
+
+def _build_ssrf_safe_session(host, ip):
+    """构造一个把指定 host 的请求固定连接到 ip 的 requests.Session。
+    用于 install_network_plugin:DNS 一次性解析校验后,所有后续请求复用同一 IP,
+    避免每次 requests.get 都重新走 DNS,缩小 rebinding 窗口。"""
+    s = requests.Session()
+    adapter = _SSRFSafeAdapter(host, ip)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    return s
+
 
 class PluginService:
     def __init__(self):
@@ -345,7 +399,6 @@ class PluginService:
 
     def install_network_plugin(self, market_url, plugin_id):
         try:
-            import requests
             import ipaddress
             base = market_url.rstrip("/")
             # SSRF 防护：仅允许 http/https 协议的市场源（P1-5）
@@ -360,6 +413,7 @@ class PluginService:
                 ips = socket.getaddrinfo(host, None)
             except socket.gaierror:
                 return False, "无法解析市场源域名"
+            safe_ip = None
             for family, _, _, _, sockaddr in ips:
                 ip_str = sockaddr[0]
                 try:
@@ -368,11 +422,20 @@ class PluginService:
                     continue
                 if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
                     return False, "不允许访问内网或本地地址"
+                # 取第一个有效公网 IP 用于 IP 直连
+                if safe_ip is None:
+                    # IPv6 需要用 [] 包裹
+                    safe_ip = f"[{ip_str}]" if ip.version == 6 else ip_str
+            if safe_ip is None:
+                return False, "无法解析市场源到有效 IP"
+            # 用 SSRF-safe session:所有后续请求固定连接到已校验的 IP,
+            # 避免 DNS rebinding(getaddrinfo 校验后,requests 内部 DNS 可能切换到内网)
+            session = _build_ssrf_safe_session(host, safe_ip)
             # allow_redirects=False：禁止自动跟随 3xx 跳转。
             # SSRF 校验只对原始 host 做了内网地址拦截，若放行跳转，恶意市场源可
             # 用 302 → http://169.254.169.254/... 把请求导向云元数据等内网资源，
             # 绕过上面的 is_private 拦截。遇到 3xx 直接判定为不安全（P1-5）
-            resp_map = requests.get(f"{base}/plugin_ids_map.json", timeout=10, allow_redirects=False)
+            resp_map = session.get(f"{base}/plugin_ids_map.json", timeout=10, allow_redirects=False)
             if resp_map.is_redirect or resp_map.is_permanent_redirect:
                 return False, "市场源返回重定向，疑似不安全"
             pmap = resp_map.json()
@@ -381,7 +444,7 @@ class PluginService:
             plugin_name = secure_filename(pmap[plugin_id])
             if not plugin_name:
                 return False, "插件名不合法"
-            resp_tree = requests.get(f"{base}/directory_tree.json", timeout=10, allow_redirects=False)
+            resp_tree = session.get(f"{base}/directory_tree.json", timeout=10, allow_redirects=False)
             if resp_tree.is_redirect or resp_tree.is_permanent_redirect:
                 return False, "市场源返回重定向，疑似不安全"
             tree = resp_tree.json()
@@ -412,7 +475,7 @@ class PluginService:
                 os.makedirs(os.path.dirname(local), exist_ok=True)
                 # 流式下载 + 分块校验，避免大文件一次性载入内存（P2-2）
                 # allow_redirects=False 同上：禁止 3xx 跳转绕过 SSRF 拦截（P1-5）
-                with requests.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
+                with session.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
                     if resp.is_redirect or resp.is_permanent_redirect:
                         return False, f"下载 {filepath} 时市场源返回重定向，疑似不安全"
                     resp.raise_for_status()

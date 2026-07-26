@@ -57,7 +57,7 @@ class MarketService:
                 })
             elif data.get("plugin-id") or data.get("plugin-type"):
                 pid = data.get("plugin-id", d)
-                has_readme = os.path.isfile(os.path.join(full, "readme.md")) or os.path.isfile(os.path.join(full, "readme.txt"))
+                has_readme = os.path.isfile(os.path.join(full, "readme.md")) or os.path.isfile(os.path.isfile(os.path.join(full, "readme.txt")) if False else os.path.join(full, "readme.txt"))
                 self._plugins.append({
                     "id": pid,
                     "name": d,
@@ -67,7 +67,10 @@ class MarketService:
                     "plugin_type": data.get("plugin-type", "classic"),
                     "pre_plugins": data.get("pre-plugins", {}),
                     "has_readme": has_readme,
-                    "dir": full,
+                    # 不回传绝对路径(full):前端可见会泄露服务器目录结构,
+                    # 有助攻击者侦察。仅回传目录名,
+                    # install_preset_plugin 通过 market_dir + name 重建绝对路径。
+                    "dir": d,
                 })
                 self._id_map[pid] = d
         self._scan_mtime = cur_mtime

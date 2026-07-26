@@ -34,9 +34,13 @@ def _client_ip():
     return request.remote_addr or "?"
 
 def audit(action, detail=""):
-    user = session.get("username", "?")
+    # 用户名/详情统一过滤控制字符,防止 delete_user/reset_user_password 等
+    # 高危接口的 username 字段含 \n 伪造审计日志行(日志注入)。
+    # 即便 create_user 入口已做 validate_username 校验,delete_user 等接口未校验,
+    # 必须在审计入口集中防御。
+    user = _sanitize_for_log(session.get("username", "?"))
     ip = _client_ip()
-    log_service.info(f"[{user}@{ip}] {action} {detail}", "AUDIT")
+    log_service.info(f"[{user}@{ip}] {action} {_sanitize_for_log(detail)}", "AUDIT")
 
 def _sanitize_for_log(s):
     """日志注入防护：去除换行/制表等控制字符，防止伪造日志行。
@@ -156,6 +160,9 @@ def change_password():
     valid, msg = auth_service.validate_password(new_pw)
     if not valid:
         return fail(msg)
+    # 新旧密码不能相同:防止用户用相同密码"改"密以绕过定期改密策略
+    if old_pw == new_pw:
+        return fail("新密码不能与旧密码相同")
     username = session.get("username", "")
     ok_, err = auth_service.change_password(username, old_pw, new_pw)
     if ok_:
@@ -238,6 +245,11 @@ def list_users():
 def create_user():
     if session.get("role") != 10:
         return fail("无权限")
+    # 限流:管理员 session 被劫持时可批量创建用户撑爆 user.json 磁盘,需按 IP 限速
+    ip = _client_ip()
+    allowed, msg = auth_service.check_login_rate(ip)
+    if not allowed:
+        return fail(msg)
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
@@ -253,6 +265,16 @@ def create_user():
     valid, msg = auth_service.validate_password(password)
     if not valid:
         return fail(msg)
+    # 高危操作二次确认:创建管理员账号视为与 reset_panel 同级的高危操作,
+    # 需当前管理员密码二次校验,防止 session 被劫持后一键植入后门管理员。
+    # 与 reset_panel 一致:密码错误计入失败次数 + 审计日志
+    if role == 10:
+        admin_pw = data.get("admin_password") or ""
+        if not auth_service.verify_password(admin_pw):
+            auth_service.record_login_fail(ip)
+            log_service.warn(f"[{session.get('username','?')}@{ip}] 创建管理员失败(密码错误)", "AUDIT")
+            return fail("管理员密码错误")
+        auth_service.clear_login_fails(ip)
     ok_, err = auth_service.create_user(username, password, role)
     if ok_:
         audit("创建用户", f"用户名={username} 角色={role}")
@@ -268,12 +290,30 @@ def create_user():
 def delete_user():
     if session.get("role") != 10:
         return fail("无权限")
+    # 限流:防止管理员 session 被劫持后批量删除用户
+    ip = _client_ip()
+    allowed, msg = auth_service.check_login_rate(ip)
+    if not allowed:
+        return fail(msg)
     data = request.get_json(silent=True) or {}
     username = data.get("username", "")
     if not username:
         return fail("参数不完整")
+    # 校验 username 格式:既防止日志注入(虽 audit 已脱敏),也避免无效字符串进 delete_user
+    valid, vmsg = auth_service.validate_username(username)
+    if not valid:
+        return fail("用户名不合法")
     if username == session.get("username"):
         return fail("不能删除自己")
+    # 二次密码确认:删除其他管理员账号与 reset_panel 同级,需当前管理员密码校验
+    target = auth_service.get_user(username)
+    if target and target.get("role") == 10:
+        admin_pw = data.get("admin_password") or ""
+        if not auth_service.verify_password(admin_pw):
+            auth_service.record_login_fail(ip)
+            log_service.warn(f"[{session.get('username','?')}@{ip}] 删除管理员失败(密码错误) 目标={username}", "AUDIT")
+            return fail("管理员密码错误")
+        auth_service.clear_login_fails(ip)
     auth_service.delete_user(username)
     audit("删除用户", f"用户名={username}")
     return ok()
@@ -282,14 +322,33 @@ def delete_user():
 def reset_user_password():
     if session.get("role") != 10:
         return fail("无权限")
+    # 限流:防止管理员 session 被劫持后批量重置密码接管账号
+    ip = _client_ip()
+    allowed, msg = auth_service.check_login_rate(ip)
+    if not allowed:
+        return fail(msg)
     data = request.get_json(silent=True) or {}
     username = data.get("username", "")
     new_pw = data.get("password", "")
     if not username or not new_pw:
         return fail("参数不完整")
+    # 校验 username 格式:避免无效字符串拼入审计日志
+    valid, vmsg = auth_service.validate_username(username)
+    if not valid:
+        return fail("用户名不合法")
     valid, msg = auth_service.validate_password(new_pw)
     if not valid:
         return fail(msg)
+    # 二次密码确认:重置其他管理员密码可立即接管该管理员账号,
+    # 与 reset_panel 同级,需当前管理员密码校验
+    target = auth_service.get_user(username)
+    if target and target.get("role") == 10:
+        admin_pw = data.get("admin_password") or ""
+        if not auth_service.verify_password(admin_pw):
+            auth_service.record_login_fail(ip)
+            log_service.warn(f"[{session.get('username','?')}@{ip}] 重置管理员密码失败(密码错误) 目标={username}", "AUDIT")
+            return fail("管理员密码错误")
+        auth_service.clear_login_fails(ip)
     ok_, err = auth_service.admin_reset_password(username, new_pw)
     if ok_:
         audit("重置用户密码", f"用户名={username}")

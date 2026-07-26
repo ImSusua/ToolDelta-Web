@@ -35,9 +35,11 @@ def api_logs_query():
     if err:
         return err
     date = _validate_log_date(request.args.get("date"))
-    level = request.args.get("level") or None
-    source = request.args.get("source") or None
-    keyword = request.args.get("keyword") or None
+    # 参数长度限制:超长 keyword 会让 log_service.query 的 O(行数×keyword 长度) 子串
+    # 匹配消耗数秒 CPU(单次请求可拖垮响应),level/source 同理限制避免异常输入。
+    level = (request.args.get("level") or "")[:32] or None
+    source = (request.args.get("source") or "")[:64] or None
+    keyword = (request.args.get("keyword") or "")[:256] or None
     limit = request.args.get("limit", 500, type=int)
     # 限制单次返回条数，防止超大日志查询拖垮响应（P2-2）
     if limit < 1:
@@ -64,9 +66,10 @@ def api_logs_export():
     if err:
         return err
     date = _validate_log_date(request.args.get("date"))
-    level = request.args.get("level") or None
-    source = request.args.get("source") or None
-    keyword = request.args.get("keyword") or None
+    # 与 query 一致的参数长度限制,防止超长 keyword 拖垮 CPU
+    level = (request.args.get("level") or "")[:32] or None
+    source = (request.args.get("source") or "")[:64] or None
+    keyword = (request.args.get("keyword") or "")[:256] or None
     text = log_service.export_text(date=date, level=level, source=source, keyword=keyword)
     return Response(
         text,
