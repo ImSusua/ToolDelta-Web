@@ -38,6 +38,18 @@ class SchedulerService:
         # 快照路径（仅此处依赖 app，之后线程内不再使用 current_app）
         self._data_path = os.path.join(app.instance_path, _DATA_FILE)
         os.makedirs(os.path.dirname(self._data_path), exist_ok=True)
+        # 目录权限收敛:与 user.json / server_conn.json / connection_service 一致
+        # scheduler.json 含定时命令(可能含敏感参数),同主机其他用户不应读取
+        try:
+            os.chmod(os.path.dirname(self._data_path), 0o700)
+        except OSError:
+            pass
+        # 既有文件权限收敛:旧文件可能仍是默认 0o644
+        if os.path.isfile(self._data_path):
+            try:
+                os.chmod(self._data_path, 0o600)
+            except OSError:
+                pass
         self._load_jobs()
 
         # 兼容：若主应用未注册本蓝图，则在此兜底注册（幂等，避免重复注册）
@@ -77,19 +89,27 @@ class SchedulerService:
 
     def _write_locked(self):
         # 原子写：先写临时文件再替换，避免写一半崩溃导致数据丢失
-        # try/finally 确保异常路径清理 tmp：json.dump/open 抛异常时 os.replace 不会执行，
-        # tmp 残留为 scheduler.json.tmp（固定名，会被下次覆盖但仍属未清理）。
+        # 用 tempfile.mkstemp 替换固定 .tmp 名:多进程/多线程场景下固定名会互相覆盖
+        # (虽然当前持锁,但与 auth_service/connection_service 的 mkstemp 模式一致更安全)
         # 同时补充 flush/fsync 保证数据真正落盘，与 watchdog/connection/wallpaper 一致。
         if not self._data_path:
             return
-        tmp = self._data_path + ".tmp"
+        import tempfile as _tf
+        fd, tmp = _tf.mkstemp(prefix=_DATA_FILE + ".", suffix=".tmp",
+                              dir=os.path.dirname(self._data_path))
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._jobs, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._data_path)
             tmp = None  # 标记已成功 replace，finally 不再删除
+            # 收敛权限:含定时命令(可能含敏感参数 op xxx / login token=xxx),
+            # 同主机其他用户不应读取,与 user.json / server_conn.json 一致
+            try:
+                os.chmod(self._data_path, 0o600)
+            except OSError:
+                pass
         finally:
             if tmp is not None and os.path.exists(tmp):
                 try:
@@ -302,9 +322,12 @@ class SchedulerService:
     # ─── 后台线程 ─────────────────────────────────────────────
 
     def _loop(self):
+        # time.sleep 包在 try 内:与 watchdog_service._loop 风格一致,
+        # 极端情况下(如解释器关闭抛 SystemExit)sleep 抛异常会被捕获并记录,
+        # 避免线程静默消亡导致所有定时任务停摆且无日志
         while True:
-            time.sleep(5)
             try:
+                time.sleep(5)
                 self._tick()
             except Exception as e:
                 try:

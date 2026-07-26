@@ -21,6 +21,11 @@ def _load_or_create_secret_key():
         return k
     except Exception:
         # 极端场景（如只读文件系统）退化为内存随机值，绝不阻塞启动
+        # 但必须明确告警:每次重启所有 session 都会失效(用户被踢下线但日志无异常)
+        # 部署在只读容器(read-only rootfs)中会触发此分支
+        import sys
+        print("[WARN] SECRET_KEY 回退为内存随机值,重启将失效所有 session;"
+              "请显式设置 SECRET_KEY 环境变量或确保 instance/ 可写", file=sys.stderr)
         return secrets.token_hex(32)
 
 
@@ -35,7 +40,10 @@ class Config:
     # 3) 都不存在则回退内存随机值（仅本进程有效，重启即失效）。
     SECRET_KEY = os.environ.get("SECRET_KEY") or _load_or_create_secret_key()
 
-    HOST = os.environ.get("HOST", "0.0.0.0")
+    # HOST 默认 127.0.0.1:仅监听本机回环,避免 VPS/云主机首次启动时公网攻击者
+    # 比 /setup 抢注管理员账号(M4)。需对外提供服务时显式设置 HOST=0.0.0.0
+    # 或通过反代(nginx + BEHIND_PROXY=1)暴露。
+    HOST = os.environ.get("HOST", "127.0.0.1")
     PORT = int(os.environ.get("PORT", "5000"))
     # 统一 DEBUG：默认关闭，可通过环境变量开启；避免与 run.py 的 debug 参数相互矛盾
     DEBUG = _env_bool("DEBUG", False)

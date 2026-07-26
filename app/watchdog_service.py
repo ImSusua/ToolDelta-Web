@@ -47,6 +47,17 @@ class WatchdogService:
         # 快照路径（仅此处依赖 app，之后线程内不再使用 current_app）
         self._config_path = os.path.join(app.instance_path, "watchdog.json")
         os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+        # 目录权限收敛:与 user.json / scheduler.json 一致
+        try:
+            os.chmod(os.path.dirname(self._config_path), 0o700)
+        except OSError:
+            pass
+        # 既有文件权限收敛
+        if os.path.isfile(self._config_path):
+            try:
+                os.chmod(self._config_path, 0o600)
+            except OSError:
+                pass
         self._load_config()
 
         # 兼容：若主应用未注册本蓝图，则在此兜底注册（幂等，避免重复注册）
@@ -113,19 +124,25 @@ class WatchdogService:
 
     def _write_config_locked(self):
         # 原子写：先写临时文件再替换，避免写一半崩溃导致配置丢失
+        # 用 tempfile.mkstemp 替换固定 .tmp 名:与 auth_service/scheduler_service 一致
         if not self._config_path:
             return
-        tmp = self._config_path + ".tmp"
-        # try/finally 确保异常路径下清理 tmp 文件：json.dump/open 抛异常时
-        # os.replace 不会执行，tmp 残留为 watchdog.json.tmp（固定名，虽会被下次覆盖
-        # 但仍属未清理的临时文件）。同时补充 flush/fsync 保证数据真正落盘。
+        import tempfile as _tf
+        fd, tmp = _tf.mkstemp(prefix="watchdog.json.", suffix=".tmp",
+                              dir=os.path.dirname(self._config_path))
+        # try/finally 确保异常路径下清理 tmp 文件。同时补充 flush/fsync 保证数据真正落盘。
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._config_path)
             tmp = None  # 标记已成功 replace，finally 不再删除
+            # 收敛权限:与 user.json / scheduler.json 一致
+            try:
+                os.chmod(self._config_path, 0o600)
+            except OSError:
+                pass
         finally:
             if tmp is not None and os.path.exists(tmp):
                 try:
@@ -287,9 +304,12 @@ class WatchdogService:
 
         if can_restart:
             start_ok = tooldelta_manager.start()
-            # 仅在 start() 返回成功时才递增 restarts_count,避免依赖缺失/文件损坏时
-            # 反复尝试失败也耗尽 max_restarts 导致永久放弃守护
-            if start_ok:
+            # M5 修复:start() 在依赖未就绪时会启动后台 _start_after_deps 线程后立即
+            # 返回 True,但子进程实际并未启动。若直接递增 restarts_count,下一个检查周期
+            # running 仍为 False 又会调 start() 又返回 True,数十秒内 max_restarts=5
+            # 就耗尽,watchdog 永久放弃守护。这里在 start() 返回 True 后复核 running,
+            # 仅当进程真正在运行时才递增 restarts_count。
+            if start_ok and tooldelta_manager.get_status().get("running"):
                 with self._lock:
                     self._runtime["restarts_count"] += 1
                     self._runtime["last_restart"] = now
@@ -297,6 +317,15 @@ class WatchdogService:
                     self._runtime["last_event"] = "于 %s 自动重启 ToolDelta" % now
                 try:
                     log_service.warn(self._runtime["last_event"], "WATCHDOG")
+                except Exception:
+                    pass
+            elif start_ok and not tooldelta_manager.get_status().get("running"):
+                # start() 返回 True 但进程未启动:依赖安装进行中,不递增 restarts_count
+                # 避免在等待安装期间耗尽 max_restarts
+                with self._lock:
+                    self._runtime["last_event"] = "依赖安装进行中,等待启动完成"
+                try:
+                    log_service.info(self._runtime["last_event"], "WATCHDOG")
                 except Exception:
                     pass
         else:

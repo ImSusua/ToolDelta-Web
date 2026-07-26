@@ -72,11 +72,18 @@ function appendLine(html) {
     var tags = root.querySelectorAll('*');
     for (var i = tags.length - 1; i >= 0; i--) {
         var tag = tags[i];
-        // 移除所有 on* 事件属性与可疑 href/src，防止 DOMParser 仍残留的事件句柄
+        // 移除所有 on* 事件属性与可疑 href/src/style，防止 DOMParser 仍残留的事件句柄
+        // M1 修复:style 属性此前未剥离,XSS 后可注入任意 CSS 构造全屏覆盖层(点击劫持)
+        // 或通过 background:url(http://attacker/...) 触发外部网络请求(数据外泄旁路)
+        // ansi_to_html 只生成 <span style="color:...">,但保险起见这里彻底移除 style,
+        // 颜色由 .c-* class 控制(console.css 已定义基础16色映射)
         var attrs = tag.attributes;
         for (var j = attrs.length - 1; j >= 0; j--) {
             var an = attrs[j].name.toLowerCase();
             if (an.indexOf('on') === 0) {
+                tag.removeAttribute(attrs[j].name);
+            } else if (an === 'style' || an === 'id') {
+                // style 可被构造 CSS 注入,id 可被锚点定位/选择器命中
                 tag.removeAttribute(attrs[j].name);
             } else if (an === 'href' || an === 'src' || an === 'xlink:href') {
                 var av = (attrs[j].value || '').trim();

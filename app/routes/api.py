@@ -133,6 +133,12 @@ def tool_output():
 
 @bp.route("/dependencies")
 def dependencies_status():
+    # role 校验:dependency_service.get_status() 返回的 _payload() 含 log_tail
+    # (pip 安装日志,可能含解释器绝对路径 / wheels 目录路径 / 镜像 URL)、
+    # mirror_url、error 等内部细节。socketio 侧 get_dependency_status 事件已要求
+    # role==10,HTTP 路由此前漏了,这里补齐与 socketio 一致。
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     from app.dependency_service import dependency_service
     return jsonify(dependency_service.get_status())
 

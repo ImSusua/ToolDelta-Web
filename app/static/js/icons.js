@@ -66,7 +66,9 @@ window.tdIcons = (function() {
   function get(name, opts) {
     opts = opts || {};
     var size = opts.size || 18;
-    var cls = opts.class ? ' class="' + opts.class + '"' : '';
+    // M3 修复:cls 来源包括 data-icon-class 属性,未来若允许动态注入(如插件市场
+    // 渲染用户提交的图标),未转义的 " 会突破属性上下文。这里显式转义双引号
+    var cls = opts.class ? ' class="' + String(opts.class).replace(/"/g, '&quot;') + '"' : '';
     var strokeW = opts.strokeWidth || 1.5;
     var paths = ICONS[name];
     if (!paths) return '';

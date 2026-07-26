@@ -246,8 +246,10 @@ def escape_html(text):
     """HTML 转义:补全引号转义以兼容属性上下文。
     旧实现仅转义 & < >,在 <span>文本</span> 上下文足够,
     但若未来被用于属性值(data-x="..."、title="..."),未转义的 " ' ` 会触发属性逃逸。
+    另剥离 null 字节:某些 HTML 解析器(尤其旧版 IE/嵌入式 webview)会把 \x00 当作
+    字符串终止符,导致转义后的内容被截断、后续注入绕过过滤。
     """
-    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (text.replace("\x00", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;").replace("'", "&#39;"))
 
 def detect_encoding(raw_bytes):
@@ -304,7 +306,13 @@ class ToolDeltaManager:
 
     def _signal_shutdown(self, *_args):
         """SIGTERM/SIGINT 信号处理：触发优雅退出。
-        用 _shutting_down 标志保护，避免信号重复递交导致多次 stop()。"""
+        用 _shutting_down 标志保护，避免信号重复递交导致多次 stop()。
+
+        关键:stop() 后必须显式退出主进程。Python 自定义信号处理器返回后会恢复
+        被中断的执行点,Werkzeug dev server 的 serve_forever 循环不会因信号而退出,
+        导致 kill/Ctrl+C 后子进程被终止但 Web 面板仍在服务,用户误以为已停止;
+        容器化部署时需等待 orchestrator 的 SIGKILL 超时(通常 10-30s)才真正退出,
+        拖慢滚动更新。故 stop() 后调用 sys.exit(0) 强制退出。"""
         if self._shutting_down:
             return
         self._shutting_down = True
@@ -312,6 +320,11 @@ class ToolDeltaManager:
             self.stop()
         except Exception:
             pass
+        # 强制退出主进程:仅 stop() 子进程不会让 Flask/Werkzeug 退出
+        # 用 os._exit 避免 atexit 钩子再次触发 stop()(已在 _shutting_down 标志保护下,
+        # 但 atexit 钩子可能因其他注册顺序问题导致死锁,os._exit 直接终止进程更稳)
+        import os as _os
+        _os._exit(0)
 
     def _is_valid_main(self, main_py):
         """检查 main.py 是否真正可用：存在、非空、且语法可编译（仅编译不执行，避免副作用）。
@@ -407,6 +420,11 @@ class ToolDeltaManager:
         with self._lock:
             if self.running:
                 return True
+            # _shutting_down 检查:SIGTERM/SIGINT 已触发后,API 层若再调 start() 会
+            # 重新拉起子进程,与"优雅退出"意图相悖。这里拦截避免重启幽灵进程。
+            if self._shutting_down:
+                self._broadcast("system", "正在关闭，无法启动")
+                return False
             if not getattr(self, "app", None):
                 self._broadcast("system", "应用上下文未初始化，无法启动")
                 return False
@@ -415,7 +433,9 @@ class ToolDeltaManager:
                 # 首次启动/初始化时 TOOLDELTA_DIR 可能为空，自动解压出厂包让主程序就绪
                 ok, msg = self._ensure_main_program()
                 if not ok:
-                    self._broadcast("system", "找不到 " + main_py + "（" + msg + "）")
+                    # 不向广播拼接 main_py 绝对路径:泄露服务器目录结构
+                    # 详细 msg 已在 _ensure_main_program 内部按需记录日志
+                    self._broadcast("system", "找不到主程序,请查看日志")
                     return False
                 self._broadcast("system", msg)
             # 启动前检查 ToolDelta 自身依赖是否已就绪
@@ -539,7 +559,14 @@ class ToolDeltaManager:
             self.output_thread.start()
             return True
         except Exception as e:
-            self._broadcast("system", "启动失败: " + str(e))
+            # 异常详情记日志,广播用脱敏短消息,避免 str(e) 泄露绝对路径/权限错误形态
+            # (FileNotFoundError 等异常消息含解释器/脚本绝对路径)
+            try:
+                from app.log_service import log_service as _ls
+                _ls.error("ToolDelta 启动失败: " + str(e), "TOOLDELTA")
+            except Exception:
+                pass
+            self._broadcast("system", "启动失败,请查看日志")
             return False
 
     def stop(self):
