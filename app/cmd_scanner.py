@@ -130,6 +130,12 @@ class CommandScanner:
         # 这里取 basename 并校验规范化后的路径仍在 pdir 内，杜绝跨目录访问。
         if not isinstance(plugin_name, str) or not plugin_name:
             return None
+        # 拒绝 NUL 与其他控制字符:os.path.basename/os.path.join 不会拒绝 NUL,
+        # 但 os.path.realpath 在 CPython 3 中会对嵌入 NUL 抛 ValueError,
+        # 该调用未包裹 try/except 会导致路由抛 500(轻微 DoS)。
+        # 同时拦截其他控制字符(<0x20),合法插件名不应包含这些字符。
+        if any(ord(c) < 32 for c in plugin_name):
+            return None
         # 拒绝路径分隔符与危险字符：合法插件名只含字母/数字/下划线/连字符/中文
         safe_name = os.path.basename(plugin_name.replace("\\", "/"))
         if safe_name != plugin_name or "/" in plugin_name or "\\" in plugin_name:

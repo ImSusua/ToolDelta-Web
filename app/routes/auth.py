@@ -4,7 +4,6 @@ from app import auth_service
 from app.log_service import log_service
 from app import wallpaper_service as wp_service
 import time
-import re
 
 bp = Blueprint("auth", __name__)
 
@@ -19,18 +18,17 @@ def fail(msg):
 
 def _client_ip():
     """获取客户端真实 IP。
-    关键：仅在显式声明部署在反代后（BEHIND_PROXY=1，对应 run.py 启用 ProxyFix）时
-    才信任 request.access_route[0]（X-Forwarded-For 最左侧）。否则必须回退到
-    request.remote_addr（TCP 对端，不可伪造）。
 
-    若无条件信任 access_route：Werkzeug 在未启用 ProxyFix 时也会把 X-Forwarded-For
-    头内容直接返回到 access_route，攻击者每次请求换一个伪造的 XFF 值，限流永远
-    收不到 10 次失败，login/change-password/setup/reset-panel 的限流全部失效。
+    始终使用 request.remote_addr：run.py 在 BEHIND_PROXY=1 时已通过 ProxyFix
+    (x_for=1) 将 remote_addr 修正为可信反代写入的最后一个 XFF 值（即真实客户端 IP）。
+    未启用 ProxyFix 时 remote_addr 为 TCP 对端，不可伪造。
+
+    关键：不要读取 request.access_route[0] 或原始 X-Forwarded-For 头！
+    - XFF 链最左侧值由客户端直接写入，攻击者每次请求换一个伪造值即可绕过 IP 限流：
+      login/change-password/setup/reset-panel 的失败计数永远凑不到阈值。
+    - ProxyFix 已根据 x_for=N 从 XFF 末尾取 N 跳写入 remote_addr，access_route 中
+      剩余的左侧值都是不可信的客户端可写内容。
     """
-    if os.environ.get("BEHIND_PROXY", "false").lower() in ("1", "true"):
-        addrs = getattr(request, "access_route", None)
-        if addrs:
-            return addrs[0]
     return request.remote_addr or "?"
 
 def audit(action, detail=""):
@@ -38,18 +36,13 @@ def audit(action, detail=""):
     # 高危接口的 username 字段含 \n 伪造审计日志行(日志注入)。
     # 即便 create_user 入口已做 validate_username 校验,delete_user 等接口未校验,
     # 必须在审计入口集中防御。
-    user = _sanitize_for_log(session.get("username", "?"))
+    # 关键:统一复用 log_service.sanitize_for_log 而非本地副本。
+    # 旧实现本地 _sanitize_for_log 仅覆盖 ASCII 控制字符 [\x00-\x1f\x7f],
+    # 而 log_service.sanitize_for_log 还覆盖 \u0085(NEL)/\u2028/U+2029(行分隔符),
+    # 这些 Unicode 行分隔符会被某些 SIEM/tail -f 解释为换行,伪造审计日志行。
+    user = log_service.sanitize_for_log(session.get("username", "?"))
     ip = _client_ip()
-    log_service.info(f"[{user}@{ip}] {action} {_sanitize_for_log(detail)}", "AUDIT")
-
-def _sanitize_for_log(s):
-    """日志注入防护：去除换行/制表等控制字符，防止伪造日志行。
-    用户名等用户输入若含 \\n、\\r 等会被拼入日志 message，可伪造新的日志行
-    干扰审计排查。校验未通过的 username 可包含任意字符，必须过滤。"""
-    if not isinstance(s, str):
-        return str(s)
-    # 替换所有控制字符（含 \r\n\t）为可见占位
-    return re.sub(r'[\x00-\x1f\x7f]', '?', s)
+    log_service.info(f"[{user}@{ip}] {action} {log_service.sanitize_for_log(detail)}", "AUDIT")
 
 @bp.route("/login")
 def login_page():
@@ -234,11 +227,9 @@ def settings_page():
 def list_users():
     if session.get("role") != 10:
         return fail("无权限")
-    users = auth_service.get_users()
-    safe = [{"username": u["username"], "role": u["role"],
-             "created_at": u.get("created_at", ""),
-             "login_at": u.get("login_at", "")}
-            for u in users]
+    # 使用 get_users_public:服务层强制剥离 password_hash/session_version,
+    # 避免未来路由层疏忽直接 jsonify(get_users()) 泄露密码哈希。
+    safe = auth_service.get_users_public()
     return ok(safe)
 
 @bp.route("/api/users/create", methods=["POST"])
@@ -314,7 +305,9 @@ def delete_user():
             log_service.warn(f"[{session.get('username','?')}@{ip}] 删除管理员失败(密码错误) 目标={username}", "AUDIT")
             return fail("管理员密码错误")
         auth_service.clear_login_fails(ip)
-    auth_service.delete_user(username)
+    ok_, msg = auth_service.delete_user(username)
+    if not ok_:
+        return fail(msg)
     audit("删除用户", f"用户名={username}")
     return ok()
 
@@ -373,15 +366,25 @@ def fetch_wallpaper():
         pass
     manual_url = (data.get("url") or "").strip()
     if manual_url:
-        # SSRF + CSS 注入防护：仅允许 HTTPS URL
-        from urllib.parse import urlparse
-        parsed = urlparse(manual_url)
-        if parsed.scheme != "https":
-            return fail("仅支持 HTTPS 协议的图片链接")
-        # 阻止引号注入（CSS context 逃逸）
-        if '"' in manual_url or "'" in manual_url or '<' in manual_url:
-            return fail("图片链接包含非法字符")
+        # 长度上限:服务层 _is_safe_url 有 _MAX_URL_LEN=2048 校验,但路由层先处理
+        # (strip/urlparse/字符扫描)后才被服务层拒绝。攻击者提交 10MB URL 会让路由
+        # 全程处理后才被拒,且原样回显造成响应放大。路由层先短路返回。
+        if len(manual_url) > 2048:
+            return fail("图片链接过长(上限 2048 字符)")
+        # 路由层直接复用服务层 _is_safe_url 做完整校验(协议/IP/危险字符/长度),
+        # 避免路由层只查子集(" ' <)而服务层查完整集合([<>"'\)\\])导致校验分叉:
+        # 旧实现路由放行 `https://attacker.com/x).png`,save() 静默拒绝落盘,
+        # 但路由仍返回 {"url": "https://attacker.com/x).png"},前端用 JS 临时
+        # 设置 backgroundImage 时 ) 会闭合 CSS url() 上下文造成 CSS 注入。
+        if not wp_service._is_safe_url(manual_url):
+            return fail("图片链接不合法(仅支持 HTTPS,禁止内网地址与特殊字符)")
         wp_service.save(manual_url)
+        # 关键:save() 静默失败无返回值。旧实现不检查返回值,管理员以为设置成功
+        # 但实际未落盘,下次 get_wallpaper() 返回旧值或空,运维误判。
+        # 这里在 save 后回读一次校验是否真正落盘。
+        saved_url = wp_service.get_wallpaper()
+        if saved_url != manual_url:
+            return fail("壁纸保存失败,请检查链接或稍后重试")
         audit("设置壁纸(手动)")
         return ok({"url": manual_url})
     url = wp_service.fetch_new()

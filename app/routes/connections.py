@@ -24,6 +24,24 @@ def _admin_required():
     return None
 
 
+def _audit(action, detail):
+    """审计日志:记录管理员对连接配置的变更。
+    server_conn.json 持久化 Minecraft 服务器连接 token(明文),管理员 session 被劫持后
+    攻击者可:①把默认连接 host 改为攻击者控制的伪造 MC 服务器劫持机器人流量;
+    ②读取已有 token;③切换 is_default 到植入的连接。无审计日志则事后无法取证。
+    detail 中可能含 host/token 等用户输入,先 sanitize 防日志注入;
+    token 字段绝不记录到审计日志(仅记 token=*** 表示是否设置)。
+    """
+    user = session.get("username", "?")
+    try:
+        log_service.info(
+            f"[{user}] {action}: {log_service.sanitize_for_log(detail)}",
+            "AUDIT"
+        )
+    except Exception:
+        pass
+
+
 @bp.route("/connections")
 def connections_page():
     # 页面入口与 console.py 一致要求管理员:避免普通用户进入页面后所有 API 返回 403,
@@ -69,6 +87,10 @@ def api_add():
     })
     if not conn:
         return _fail(err)
+    # 审计:host/name/note 记录原值(token 不记),token 仅记是否设置
+    _audit("添加连接", f"name={name} host={host} port={port} "
+            f"protocol={data.get('protocol','?')} "
+            f"token_set={'yes' if data.get('token') else 'no'}")
     return jsonify({"success": True, "conn": conn})
 
 
@@ -89,6 +111,12 @@ def api_update():
     ok = conn_svc.update_connection(conn_id, data)
     if not ok:
         return _fail("连接不存在")
+    # 审计:仅记变更字段名 + token 是否被改,不记具体值
+    changed_fields = [k for k in ("name", "host", "port", "protocol", "token", "note") if k in data]
+    token_changed = "token" in changed_fields
+    if token_changed:
+        changed_fields[changed_fields.index("token")] = f"token({'set' if data.get('token') else 'cleared'})"
+    _audit("更新连接", f"id={conn_id} fields={','.join(changed_fields)}")
     return _ok()
 
 
@@ -104,6 +132,7 @@ def api_delete():
     ok = conn_svc.delete_connection(conn_id)
     if not ok:
         return _fail("连接不存在")
+    _audit("删除连接", f"id={conn_id}")
     return _ok()
 
 
@@ -119,6 +148,7 @@ def api_default():
     ok = conn_svc.set_default(conn_id)
     if not ok:
         return _fail("连接不存在")
+    _audit("设置默认连接", f"id={conn_id}")
     return _ok()
 
 

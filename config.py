@@ -76,3 +76,10 @@ class Config:
 
     # Web 面板自身数据目录（收藏等用户数据），独立于 ToolDelta 安装目录
     WEB_DATA_DIR = os.path.join(BASE_DIR, "data")
+
+    # 全局请求体大小上限:Flask 在接收阶段就拒绝超限请求返回 413,
+    # 防止攻击者通过省略 Content-Length 头(chunked transfer encoding)
+    # 绕过路由层 f.content_length 预校验,持续推送 GB 级数据撑爆 /tmp
+    # 或 TOOLDELTA_DIR 所在分区导致服务崩溃。
+    # 设为 60MB:覆盖单文件 50MB 上限 + multipart 表单字段开销。
+    MAX_CONTENT_LENGTH = 60 * 1024 * 1024

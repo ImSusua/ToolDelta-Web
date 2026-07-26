@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, Response, session
+from flask import Blueprint, render_template, request, jsonify, Response, session, abort
 
 from app.log_service import log_service
 
@@ -13,6 +13,11 @@ def _admin_required():
 
 @bp.route("/logs")
 def logs_page():
+    # 与其它管理员页(console/backup/commands/market/plugins/watchdog/scheduler)对齐:
+    # 普通用户(role=1)不应访问 /logs 页面,虽 API 层会返回 403,
+    # 但页面骨架会暴露功能存在性与 API 路径,便于攻击者侦察。
+    if session.get("role") != 10:
+        abort(403)
     return render_template("logs.html")
 
 def _validate_log_date(date):

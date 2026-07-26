@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, jsonify, session
 import time as _time
 
 from app.scheduler_service import scheduler_service
+from app.log_service import log_service
 
 bp = Blueprint("scheduler", __name__)
 
@@ -29,8 +30,31 @@ def _validate_job_id(payload):
     return job_id, None
 
 
+def _audit(action, detail):
+    """审计日志:记录管理员对定时任务的变更,便于事后追溯。
+    定时任务可执行任意 ToolDelta 控制台命令(op/give/say 等),
+    若管理员 session 被劫持,攻击者可植入后门命令。无审计日志则无法
+    区分"合法管理员操作"与"攻击者破坏",事后无法取证。
+    detail 中可能含用户输入(job name/command),先 sanitize 防日志注入。
+    """
+    user = session.get("username", "?")
+    try:
+        log_service.info(
+            f"[{user}] {action}: {log_service.sanitize_for_log(detail)}",
+            "AUDIT"
+        )
+    except Exception:
+        pass
+
+
 @bp.route("/scheduler")
 def scheduler_page():
+    # 与其它管理员页(console/backup/commands/market/plugins/watchdog)对齐:
+    # 普通用户(role=1)不应访问 /scheduler 页面,虽 API 层会返回 403,
+    # 但页面骨架会暴露功能存在性与 API 路径,便于攻击者侦察。
+    if session.get("role") != 10:
+        from flask import abort
+        abort(403)
     return render_template("scheduler.html")
 
 
@@ -54,6 +78,11 @@ def api_add():
         return jsonify({"success": False, "message": str(e)})
     except Exception:
         return jsonify({"success": False, "message": "添加任务失败"})
+    # 审计:记录创建的定时任务名称/类型/命令,事后可追溯。
+    # command 可能含敏感内容(如 op <player>),但审计需完整记录操作意图,
+    # log_service 内部已对控制字符 sanitize 防注入。
+    _audit("创建定时任务", f"name={job.get('name','?')} type={job.get('type','?')} "
+            f"enabled={job.get('enabled',False)} command={job.get('command','')}")
     return jsonify({"success": True, "job": job})
 
 
@@ -77,6 +106,9 @@ def api_update():
         return jsonify({"success": False, "message": "更新任务失败"})
     if not ok:
         return jsonify({"success": False, "message": msg or "更新失败"})
+    # 审计:记录任务变更,只记变更字段而非完整 payload(避免冗余)
+    changed = {k: payload.get(k) for k in ("name", "type", "enabled", "interval", "command", "at") if k in payload}
+    _audit("更新定时任务", f"id={job_id} fields={changed}")
     return jsonify({"success": True})
 
 
@@ -94,6 +126,7 @@ def api_delete():
         return jsonify({"success": False, "message": "任务不存在"})
     # 清理频率限制状态,避免任务被重建后误以为刚触发过
     _RUN_NOW_LAST_TS.pop(job_id, None)
+    _audit("删除定时任务", f"id={job_id}")
     return jsonify({"success": True})
 
 
@@ -117,4 +150,5 @@ def api_run():
     if not ok:
         return jsonify({"success": False, "message": "任务不存在"})
     _RUN_NOW_LAST_TS[job_id] = now
+    _audit("手动触发定时任务", f"id={job_id}")
     return jsonify({"success": True})

@@ -262,4 +262,11 @@ def create_app():
             return _jsonify({"success": False, "error": "无权限"}), 403
         return _abort(403)
 
+    @app.errorhandler(413)
+    def _handle_413(e):
+        # MAX_CONTENT_LENGTH 触发:返回 JSON 而非默认 HTML,便于前端 fetch 处理
+        if _req.path.startswith("/api/"):
+            return _jsonify({"success": False, "error": "请求体过大(超过 60MB 上限)"}), 413
+        return _abort(413)
+
     return app

@@ -61,11 +61,18 @@ class SchedulerService:
             pass
 
         # 启动后台调度线程（daemon）
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(
-                target=self._loop, daemon=True, name="scheduler-loop"
-            )
-            self._thread.start()
+        # 关键:is_alive() 检查与 start() 必须在 _lock 内,否则并发调用 init_app
+        # (测试/热重载场景)时两个调用方可能同时通过 is_alive() 检查并各自创建线程,
+        # 导致两个调度循环并行运行,同一 job 被双重执行(run_count 重复递增、
+        # send_command 重复发送 ToolDelta 控制台命令)。
+        # 注意:_loop 内的 _tick 也用 _lock,但此处持锁时间极短(仅 start 调用),
+        # 不会与 _tick 形成长时间死锁。
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._loop, daemon=True, name="scheduler-loop"
+                )
+                self._thread.start()
 
     # ─── 持久化 ───────────────────────────────────────────────
 

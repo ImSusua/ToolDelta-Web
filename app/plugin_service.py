@@ -66,6 +66,52 @@ def _build_ssrf_safe_session(host, ip):
     return s
 
 
+def resolve_safe_session(url):
+    """统一 SSRF 防护入口:解析 URL、校验协议、解析 DNS、拒绝内网/回环地址,
+    并构造把 host 固定连接到已校验 IP 的 requests.Session。
+
+    返回 (session, None) 成功;或 (None, error_msg) 失败。
+    供 market_connect(api.py)与 install_network_plugin(plugin_service)共用,
+    避免两处校验逻辑分叉导致一方漏掉 IP pinning 触发 DNS rebinding。
+    """
+    import ipaddress
+    if not isinstance(url, str) or len(url) > 2048:
+        return None, "URL 不合法"
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return None, "仅支持 http/https 协议"
+    host = parsed.hostname or ""
+    if not host:
+        return None, "URL 主机名不合法"
+    try:
+        ips = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return None, "无法解析域名"
+    safe_ip = None
+    for family, _, _, _, sockaddr in ips:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        # is_private 仅覆盖 10/172.16-31/192.168,必须额外拦截:
+        # - is_loopback: 127.0.0.0/8
+        # - is_link_local: 169.254.0.0/16(云元数据 169.254.169.254)
+        # - is_reserved: 0.0.0.0/8、240.0.0.0/4
+        # - is_multicast: 224.0.0.0/4
+        # - is_unspecified: 0.0.0.0
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return None, "不允许访问内网或本地地址"
+        # 取第一个有效公网 IP 用于 IP 直连
+        if safe_ip is None:
+            # IPv6 需要用 [] 包裹
+            safe_ip = f"[{ip_str}]" if ip.version == 6 else ip_str
+    if safe_ip is None:
+        return None, "无法解析到有效 IP"
+    return _build_ssrf_safe_session(host, safe_ip), None
+
+
 class PluginService:
     def __init__(self):
         self._cache = None  # (mtime, plugins_list) for list_plugins
@@ -373,11 +419,29 @@ class PluginService:
         plugin_data = market_service.get_plugin_data(plugin_id, refresh=True)
         if not plugin_data:
             return False, "插件不存在"
-        src_dir = plugin_data.get("dir")
         plugin_name = plugin_data.get("name")
         if self._safe_name(plugin_name) is None:
             return False, "插件名不合法"
-        if not src_dir or not os.path.isdir(src_dir):
+        # 关键修复:src_dir 必须拼接到 market_dir 之下,而不是直接当相对路径用。
+        # market_service.scan 故意只回传目录名(注释 market_service.py:70-72 说明
+        # install_preset_plugin 会重建绝对路径),但旧实现直接用裸目录名,
+        # os.path.isdir(src_dir) 与 shutil.copytree(src_dir, target) 都按 CWD 解析,
+        # Flask 进程 CWD 通常是项目根而非 plugin_market:
+        #   - 功能上几乎必然失败(os.path.isdir 返回 False)
+        #   - 安全上若 CWD 恰好存在同名目录(如其他接口能向 CWD 写文件),
+        #     install_preset 会把那个不可信目录当作预设插件复制为插件,
+        #     随后 ToolDelta 启动加载其中 __init__.py 触发 RCE。
+        src_dir_name = plugin_data.get("dir")
+        if not src_dir_name:
+            return False, "插件源目录不存在，请刷新市场后重试"
+        market_dir = market_service.get_market_dir()
+        src_dir = os.path.join(market_dir, src_dir_name)
+        # 纵深防御:realpath 校验防止 market_dir 下存在符号链接逃逸到外部目录
+        abs_market = os.path.realpath(market_dir)
+        real_src = os.path.realpath(src_dir)
+        if not (real_src == abs_market or real_src.startswith(abs_market + os.sep)):
+            return False, "插件源目录越权"
+        if not os.path.isdir(src_dir):
             return False, "插件源目录不存在，请刷新市场后重试"
         pdir = self.get_classic_plugin_path()
         target = os.path.join(pdir, plugin_name)
@@ -406,39 +470,18 @@ class PluginService:
         return results
 
     def install_network_plugin(self, market_url, plugin_id):
+        # 临时暂存目录:所有文件先下载到 staging,全部成功后才 rename 到 target。
+        # 旧实现直接 os.makedirs(target) 后逐文件下载,中途失败(超限/网络中断/
+        # 市场源返回重定向)时 target 残留半写文件,list_plugins 会把它当作有效插件,
+        # 攻击者可先下发恶意 __init__.py 再让第 2 个文件触发失败,残留的恶意
+        # __init__.py 在下次 ToolDelta 启动时被执行实现 RCE。
+        staging = None
         try:
-            import ipaddress
             base = market_url.rstrip("/")
-            # SSRF 防护：仅允许 http/https 协议的市场源（P1-5）
-            parsed = urlparse(base)
-            if parsed.scheme not in ("http", "https"):
-                return False, "不支持的市场源协议"
-            host = parsed.hostname or ""
-            if not host:
-                return False, "市场源地址不合法"
-            # 拒绝内网/回环/链路本地/保留地址,防止 SSRF 探测内网或读取云元数据
-            try:
-                ips = socket.getaddrinfo(host, None)
-            except socket.gaierror:
-                return False, "无法解析市场源域名"
-            safe_ip = None
-            for family, _, _, _, sockaddr in ips:
-                ip_str = sockaddr[0]
-                try:
-                    ip = ipaddress.ip_address(ip_str)
-                except ValueError:
-                    continue
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-                    return False, "不允许访问内网或本地地址"
-                # 取第一个有效公网 IP 用于 IP 直连
-                if safe_ip is None:
-                    # IPv6 需要用 [] 包裹
-                    safe_ip = f"[{ip_str}]" if ip.version == 6 else ip_str
-            if safe_ip is None:
-                return False, "无法解析市场源到有效 IP"
-            # 用 SSRF-safe session:所有后续请求固定连接到已校验的 IP,
-            # 避免 DNS rebinding(getaddrinfo 校验后,requests 内部 DNS 可能切换到内网)
-            session = _build_ssrf_safe_session(host, safe_ip)
+            # SSRF 防护:复用统一入口,避免与 market_connect 逻辑分叉
+            session, err = resolve_safe_session(base)
+            if session is None:
+                return False, err or "市场源地址不合法"
             # allow_redirects=False：禁止自动跟随 3xx 跳转。
             # SSRF 校验只对原始 host 做了内网地址拦截，若放行跳转，恶意市场源可
             # 用 302 → http://169.254.169.254/... 把请求导向云元数据等内网资源，
@@ -461,7 +504,11 @@ class PluginService:
                 return False, "无法获取插件文件列表"
             pdir = self.get_classic_plugin_path()
             target = os.path.join(pdir, plugin_name)
-            os.makedirs(target, exist_ok=True)
+            disabled_target = os.path.join(pdir, plugin_name + "+disabled")
+            if os.path.exists(target) or os.path.exists(disabled_target):
+                return False, f"插件已存在: {plugin_name}"
+            # 临时暂存目录:创建在 pdir 下(同文件系统,os.replace/shutil.move 才能原子)
+            staging = tempfile.mkdtemp(prefix="__net_install_", dir=pdir)
             files_to_download = []
             self._unfold_dict(ftree, plugin_name, files_to_download)
             # 网络插件包整体上限：防止文件数/总大小异常拖垮磁盘（P2-2）
@@ -477,11 +524,12 @@ class PluginService:
                 if os.path.isabs(filepath) or ".." in rel.split(os.sep):
                     continue
                 url = f"{base}/{plugin_name}/{filepath}"
-                local = os.path.join(target, rel)
-                if not os.path.abspath(local).startswith(os.path.abspath(target) + os.sep):
+                local = os.path.join(staging, rel)
+                # 路径越权校验:相对 staging 目录
+                if not os.path.abspath(local).startswith(os.path.abspath(staging) + os.sep):
                     continue
                 os.makedirs(os.path.dirname(local), exist_ok=True)
-                # 流式下载 + 分块校验，避免大文件一次性载入内存（P2-2）
+                # 流式下载 + 分块写盘,避免大文件一次性载入内存（P2-2）
                 # allow_redirects=False 同上：禁止 3xx 跳转绕过 SSRF 拦截（P1-5）
                 with session.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
                     if resp.is_redirect or resp.is_permanent_redirect:
@@ -494,18 +542,19 @@ class PluginService:
                     if cl > MAX_FILE_SIZE:
                         return False, f"文件过大: {filepath}"
                     file_total = 0
-                    chunks = []
-                    for chunk in resp.iter_content(chunk_size=64 * 1024):
-                        file_total += len(chunk)
-                        total_downloaded += len(chunk)
-                        if file_total > MAX_FILE_SIZE:
-                            return False, f"文件过大: {filepath}"
-                        if total_downloaded > MAX_TOTAL_SIZE:
-                            return False, "插件包总大小超过上限"
-                        chunks.append(chunk)
                     with open(local, "wb") as f:
-                        for chunk in chunks:
+                        for chunk in resp.iter_content(chunk_size=64 * 1024):
+                            file_total += len(chunk)
+                            total_downloaded += len(chunk)
+                            if file_total > MAX_FILE_SIZE:
+                                return False, f"文件过大: {filepath}"
+                            if total_downloaded > MAX_TOTAL_SIZE:
+                                return False, "插件包总大小超过上限"
                             f.write(chunk)
+            # 全部下载成功:原子移动 staging → target
+            # os.replace 对目录要求源/目标在同一文件系统(pdir 下,满足)
+            os.replace(staging, target)
+            staging = None
             return True, plugin_name
         except Exception as e:
             # 异常详情记日志,对客户端只返回通用消息,避免 str(e) 泄露内部网络环境/
@@ -515,6 +564,13 @@ class PluginService:
             except Exception:
                 pass
             return False, "安装失败,请查看日志"
+        finally:
+            # 失败回滚:清理 staging 目录,避免半写插件残留触发 RCE
+            if staging and os.path.exists(staging):
+                try:
+                    shutil.rmtree(staging, ignore_errors=True)
+                except Exception:
+                    pass
 
     def _unfold_dict(self, d, prefix, result):
         """把 directory_tree.json 的嵌套文件树展开为相对路径列表。

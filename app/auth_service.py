@@ -128,18 +128,52 @@ def is_configured():
     users = _read()
     return len(users) > 0
 
+# 时序旁路防御:用户名不存在时也执行一次固定 scrypt 校验,拉平响应耗时。
+# 旧实现 username 不存在时 get_user 返回 None,短路跳过 check_password_hash,
+# 响应 ~1ms;存在时 scrypt 校验 ~50-200ms。攻击者可通过响应耗时枚举有效用户名。
+# 注意:dummy hash 必须在模块加载时生成一次(scrypt 生成耗时较长),
+# 不能每次调用动态生成,否则非存在路径会因生成耗时反而比存在路径慢。
+_DUMMY_HASH = generate_password_hash("dummy-password-for-timing", method=HASH_METHOD)
+
+# 公开视图字段白名单:get_users_public/get_user_public 仅返回这些字段,
+# 强制剥离 password_hash/session_version 等敏感字段。
+# 旧实现 get_users/get_user 直接返回 _read() 的完整字典(含 password_hash),
+# 路由层一旦疏忽 jsonify(users) 就会泄露密码哈希给客户端,可离线暴力破解弱密码。
+_PUBLIC_FIELDS = ("username", "role", "created_at", "login_at")
+
+def _to_public(u):
+    """剥离敏感字段,仅保留可对外暴露的字段。"""
+    if not isinstance(u, dict):
+        return {}
+    return {k: u.get(k) for k in _PUBLIC_FIELDS}
+
 def get_users():
+    """返回内部完整用户列表(含 password_hash)。仅供服务层/路由层内部使用。
+    面向客户端的接口必须改用 get_users_public。"""
     return _read()
 
+def get_users_public():
+    """返回剥离敏感字段后的用户列表,供路由层 jsonify。"""
+    return [_to_public(u) for u in _read()]
+
 def get_user(username):
+    """返回内部完整用户对象(含 password_hash)。仅供服务层内部使用。"""
     for u in _read():
         if u.get("username") == username:
             return u
     return None
 
+def get_user_public(username):
+    """返回剥离敏感字段后的用户对象,供路由层 jsonify。"""
+    u = get_user(username)
+    return _to_public(u) if u else None
+
 def verify_username_password(username, password):
     u = get_user(username)
-    if u and check_password_hash(u.get("password_hash", ""), password):
+    # 时序旁路防御:用户不存在时也执行一次 scrypt 校验(_DUMMY_HASH),
+    # 使两条路径(存在/不存在)的响应耗时一致,防止通过耗时差异枚举用户名。
+    stored = u.get("password_hash", "") if u else _DUMMY_HASH
+    if check_password_hash(stored, password) and u:
         return u
     return None
 
@@ -192,6 +226,11 @@ def create_user(username, password, role=1):
     valid, msg = validate_password(password)
     if not valid:
         return False, msg
+    # role 白名单校验:仅允许 ROLES.values() 中的合法角色值。
+    # 旧实现把 role 参数直接写入持久化文件,路由层若把请求体 role 字段透传
+    # (如 role=10 创建管理员,或 role=999 制造超出预期的角色),会导致提权。
+    if role not in ROLES.values():
+        return False, "角色不合法"
     with _lock:
         users = _read_locked()
         if any(u.get("username") == username for u in users):
@@ -208,11 +247,22 @@ def create_user(username, password, role=1):
     return True, ""
 
 def delete_user(username):
+    """删除用户。返回 (ok, msg)。
+    - 最后一个管理员保护:删除后若无 role==10 用户,面板将永久失去管理能力
+      (setup_user 仅在 users 为空时可用,无法补创建管理员,需手动编辑 user.json)。
+      防止管理员误删自己或被社工诱导删光所有 admin。
+    """
     with _lock:
         users = _read_locked()
+        target = next((u for u in users if u.get("username") == username), None)
+        if target and target.get("role") == 10:
+            remaining_admins = [u for u in users
+                                if u.get("role") == 10 and u.get("username") != username]
+            if not remaining_admins:
+                return False, "至少需保留一个管理员账号"
         users = [u for u in users if u.get("username") != username]
         _write_locked(users)
-    return True
+    return True, ""
 
 def change_password(username, old_password, new_password):
     valid, msg = validate_password(new_password)
@@ -262,8 +312,22 @@ def get_user_session_version(username):
     return None
 
 def reset_panel():
-    if USER_FILE and os.path.isfile(USER_FILE):
-        os.remove(USER_FILE)
+    """重置面板:删除 user.json 并清理内存中的限流状态。
+    关键:必须在 _lock 内执行删除,与 _write_locked 协调。
+    旧实现未持锁,isfile 与 remove 之间存在 TOCTOU 窗口:
+    若另一线程在此期间通过 _write_locked 重建了 USER_FILE(如 setup_user 抢先创建新管理员),
+    remove 会误删新文件,导致刚设置的 admin 丢失。
+    同时清理 LOGIN_FAIL_MAP/BAN_MAP:重置后已被封禁的 IP 仍处于封禁状态
+    (逻辑不一致,虽然非安全问题但会造成用户困惑)。
+    """
+    with _lock:
+        if USER_FILE and os.path.isfile(USER_FILE):
+            try:
+                os.remove(USER_FILE)
+            except OSError:
+                pass
+        LOGIN_FAIL_MAP.clear()
+        BAN_MAP.clear()
 
 def update_login_time(username):
     with _lock:
