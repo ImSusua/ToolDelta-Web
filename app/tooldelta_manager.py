@@ -641,8 +641,41 @@ class ToolDeltaManager:
         # Windows 的 select.select 仅支持 socket fd，对管道/pty fd 会抛
         # OSError(WinError 10038)，被 except 捕获后 break 会让 output 线程立即退出，
         # 导致子进程仍在运行但前端无任何输出且 running=False 让 send_command 失效。
-        # Windows 下回退为 readline + 短轮询 proc.poll() 的兼容路径。
+        # Windows 下回退为 reader 线程 + queue 轮询：把阻塞读转移到独立线程，
+        # 主循环按 150ms 超时 poll queue，无数据时 flush 残留缓冲，保证提示符实时显示。
         use_select = fd is not None and os.name != "nt"
+        # Windows 路径专用：reader 线程把 stdout 阻塞读结果投递到 queue
+        read_q = None
+        reader_thread = None
+        if not use_select and stdout is not None:
+            import queue as _queue
+            read_q = _queue.Queue()
+
+            def _win_reader():
+                # reader 线程：阻塞读 stdout，每读到一段就 put 到 queue。
+                # 关键：用 read1 而非 read(n)——BufferedReader.read(n) 会阻塞直到读满 n 字节，
+                # 而 read1 只做一次底层 raw read，有多少返回多少（仍会阻塞直到至少 1 字节可用）。
+                # 这样 "请选择: " 这种无换行的片段也能立即被读到并投递到 queue。
+                try:
+                    while True:
+                        try:
+                            if hasattr(stdout, "read1"):
+                                chunk = stdout.read1(4096)
+                            else:
+                                chunk = stdout.read(4096)
+                        except (OSError, ValueError):
+                            break
+                        if not chunk:
+                            break
+                        read_q.put(chunk)
+                except Exception:
+                    pass
+                finally:
+                    # sentinel：通知主循环 stdout 已 EOF（子进程退出/关闭管道）
+                    read_q.put(None)
+
+            reader_thread = threading.Thread(target=_win_reader, daemon=True)
+            reader_thread.start()
         while self.running and proc and proc.poll() is None:
             try:
                 if use_select:
@@ -660,17 +693,23 @@ class ToolDeltaManager:
                         chunk = stdout.read(4096)
                     else:
                         break
-                else:
-                    # Windows / 无 fd 路径：readline 阻塞读单行，配合 150ms 短轮询
-                    # proc.poll() 保证子进程退出后能及时结束循环。
-                    # readline 不会卡死：管道在子进程退出时返回 EOF(空 bytes)。
-                    line = stdout.readline() if stdout is not None else b""
-                    chunk = line if line else b""
-                    if not chunk:
+                elif read_q is not None:
+                    # Windows 路径：从 queue 拉取 reader 线程投递的 chunk，最多等 150ms
+                    try:
+                        item = read_q.get(timeout=0.15)
+                    except _queue.Empty:
+                        # 超时且有残留不完整行：立即 flush，避免提示符卡住不显示
+                        if buf:
+                            self._emit_line(self._decode_line(buf))
+                            buf = b""
+                        continue
+                    if item is None:
+                        # reader 线程退出 sentinel（stdout EOF）
                         break
-                    # readline 已含换行，直接 emit 即可，无需再走 buf 拼接路径
-                    self._emit_line(self._decode_line(chunk))
-                    continue
+                    chunk = item
+                else:
+                    # 无 fd 也无 stdout（不应发生）：直接退出避免空转
+                    break
             except (OSError, ValueError):
                 break
             if not chunk:

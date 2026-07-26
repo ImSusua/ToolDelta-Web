@@ -1,3 +1,4 @@
+import os
 from flask import Blueprint, render_template, request, jsonify, session, redirect
 from app import auth_service
 from app.log_service import log_service
@@ -18,12 +19,18 @@ def fail(msg):
 
 def _client_ip():
     """获取客户端真实 IP。
-    优先使用 request.access_route[0]（最左侧，通常为客户端真实 IP，需配合 ProxyFix），
-    回退到 request.remote_addr。仅当部署在可信反代后并通过 BEHIND_PROXY=1 启用
-    ProxyFix 时 access_route 才包含可信的 X-Forwarded-For 链。"""
-    addrs = getattr(request, "access_route", None)
-    if addrs:
-        return addrs[0]
+    关键：仅在显式声明部署在反代后（BEHIND_PROXY=1，对应 run.py 启用 ProxyFix）时
+    才信任 request.access_route[0]（X-Forwarded-For 最左侧）。否则必须回退到
+    request.remote_addr（TCP 对端，不可伪造）。
+
+    若无条件信任 access_route：Werkzeug 在未启用 ProxyFix 时也会把 X-Forwarded-For
+    头内容直接返回到 access_route，攻击者每次请求换一个伪造的 XFF 值，限流永远
+    收不到 10 次失败，login/change-password/setup/reset-panel 的限流全部失效。
+    """
+    if os.environ.get("BEHIND_PROXY", "false").lower() in ("1", "true"):
+        addrs = getattr(request, "access_route", None)
+        if addrs:
+            return addrs[0]
     return request.remote_addr or "?"
 
 def audit(action, detail=""):

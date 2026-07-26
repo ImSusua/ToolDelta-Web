@@ -45,11 +45,21 @@ def _write_all(conns):
     d = os.path.dirname(_FILE)
     os.makedirs(d, exist_ok=True)
     tmp = os.path.join(d, ".server_conn.tmp." + uuid.uuid4().hex)
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(conns, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, _FILE)
+    # try/finally 确保异常路径下清理 tmp：json.dump/flush/fsync 任一抛异常时
+    # os.replace 不会执行，tmp 会残留在磁盘上，多次失败累积多个 .server_conn.tmp.* 文件
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(conns, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _FILE)
+        tmp = None  # 标记已成功 replace，finally 不再删除
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def list_connections():

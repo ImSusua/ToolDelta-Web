@@ -553,23 +553,37 @@ function deleteDataFile(name, filename) {
 }
 
 function refreshDataFiles() {
-    fetch('/api/plugins/data-files?name=' + encodeURIComponent(currentDetailName))
+    // 竞态守卫：与 showPluginDetail 同源问题。用户在 fetch 期间切换到另一个插件详情时，
+    // currentDetailName 已变，旧请求返回的数据会被错误渲染到新弹窗。闭包捕获 originName，
+    // 回调用 stillActive() 校验是否仍是发起时的插件，已切换则丢弃过期结果。
+    var originName = currentDetailName;
+    function stillActive() { return currentDetailName === originName; }
+    fetch('/api/plugins/data-files?name=' + encodeURIComponent(originName))
         .then(function(r) { return r.json(); })
-        .then(function(d) { renderDataFiles(d, currentDetailName); })
+        .then(function(d) {
+            if (!stillActive()) return;
+            renderDataFiles(d, originName);
+        })
         .catch(function() {
+            if (!stillActive()) return;
             var el = document.getElementById('detailDataList');
             if (el) el.innerHTML = '<div style="font-size:13px;color:var(--ink-subtle)">刷新数据文件失败</div>';
         });
 }
 
 function refreshConfigFile() {
-    fetch('/api/plugins/config?name=' + encodeURIComponent(currentDetailName))
+    // 竞态守卫：同 refreshDataFiles，闭包捕获 originName 防止切换详情后旧数据覆盖新弹窗
+    var originName = currentDetailName;
+    function stillActive() { return currentDetailName === originName; }
+    fetch('/api/plugins/config?name=' + encodeURIComponent(originName))
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (!stillActive()) return;
             var el = document.getElementById('detailConfig');
             if (el) el.textContent = (d && d.error) ? '无配置文件' : JSON.stringify(d, null, 2);
         })
         .catch(function() {
+            if (!stillActive()) return;
             var el = document.getElementById('detailConfig');
             if (el) el.textContent = '刷新配置失败';
         });

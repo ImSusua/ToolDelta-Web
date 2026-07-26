@@ -116,9 +116,22 @@ class WatchdogService:
         if not self._config_path:
             return
         tmp = self._config_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self._config, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, self._config_path)
+        # try/finally 确保异常路径下清理 tmp 文件：json.dump/open 抛异常时
+        # os.replace 不会执行，tmp 残留为 watchdog.json.tmp（固定名，虽会被下次覆盖
+        # 但仍属未清理的临时文件）。同时补充 flush/fsync 保证数据真正落盘。
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._config_path)
+            tmp = None  # 标记已成功 replace，finally 不再删除
+        finally:
+            if tmp is not None and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     # ─── 公开方法 ─────────────────────────────────────────────
 
@@ -127,47 +140,54 @@ class WatchdogService:
             return dict(self._config)
 
     def set_config(self, payload):
+        """合并校验并更新配置，返回是否成功。
+
+        关键：READ+MODIFY+WRITE 必须在同一个 self._lock 临界区内完成。
+        旧实现把锁拆成两段（READ 持锁→释放→MODIFY 不持锁→WRITE 重新持锁），
+        在 MODIFY 窗口内其他线程（enable/disable/另一个 set_config）的写入会被
+        本线程的旧 cfg 副本整体覆盖，造成「丢失更新」。
+        校验逻辑不涉及 I/O 或长耗时，无需让出锁，统一在锁内完成即可。
+        """
         if not isinstance(payload, dict):
             return False
         with self._lock:
             cfg = dict(self._config)
-        # 合并校验：仅校验 payload 中出现的字段，失败时返回 False 且不落盘
-        if "enabled" in payload:
-            if not isinstance(payload["enabled"], bool):
-                return False
-            cfg["enabled"] = payload["enabled"]
-        if "check_interval" in payload:
-            try:
-                v = int(payload["check_interval"])
-            except (TypeError, ValueError):
-                return False
-            if v < 1:
-                return False
-            cfg["check_interval"] = v
-        if "auto_restart" in payload:
-            if not isinstance(payload["auto_restart"], bool):
-                return False
-            cfg["auto_restart"] = payload["auto_restart"]
-        if "max_restarts" in payload:
-            try:
-                v = int(payload["max_restarts"])
-            except (TypeError, ValueError):
-                return False
-            if v < 0:
-                return False
-            cfg["max_restarts"] = v
-        if "restart_cooldown" in payload:
-            try:
-                v = int(payload["restart_cooldown"])
-            except (TypeError, ValueError):
-                return False
-            if v < 0:
-                return False
-            cfg["restart_cooldown"] = v
-        with self._lock:
+            # 合并校验：仅校验 payload 中出现的字段，失败时返回 False 且不落盘
+            if "enabled" in payload:
+                if not isinstance(payload["enabled"], bool):
+                    return False
+                cfg["enabled"] = payload["enabled"]
+            if "check_interval" in payload:
+                try:
+                    v = int(payload["check_interval"])
+                except (TypeError, ValueError):
+                    return False
+                if v < 1:
+                    return False
+                cfg["check_interval"] = v
+            if "auto_restart" in payload:
+                if not isinstance(payload["auto_restart"], bool):
+                    return False
+                cfg["auto_restart"] = payload["auto_restart"]
+            if "max_restarts" in payload:
+                try:
+                    v = int(payload["max_restarts"])
+                except (TypeError, ValueError):
+                    return False
+                if v < 0:
+                    return False
+                cfg["max_restarts"] = v
+            if "restart_cooldown" in payload:
+                try:
+                    v = int(payload["restart_cooldown"])
+                except (TypeError, ValueError):
+                    return False
+                if v < 0:
+                    return False
+                cfg["restart_cooldown"] = v
             self._config = cfg
             self._write_config_locked()
-        return True
+            return True
 
     def enable(self):
         with self._lock:

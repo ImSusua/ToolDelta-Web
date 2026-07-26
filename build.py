@@ -31,13 +31,39 @@ MANIFEST = os.path.join(ARCHIVES_DIR, "manifest.json")
 EXCLUDE_DIRS = {
     ".git", "__pycache__", "backups", "ToolDelta", "plugin_market",
     "instance", "archives", "build", "dist", ".venv", "venv", "env",
+    "data",  # 运行时数据目录（用户配置/凭据），绝不进发布包
+    ".idea", ".vscode", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "node_modules",  # 前端构建产物，不应进 Python 后端交付包
 }
+# 文件名精确排除（敏感配置 / 凭据 / 测试脚本 / 临时产物）
 EXCLUDE_FILES = {
     "ToolDelta-Web.zip",  # 旧的「最新交付物」不要打回包里
     "selfcheck_summary.txt",  # 自检结果产物不进包
     "build_info.json",  # 构建元数据，不进包
+    # 测试脚本：在用户生产环境执行会清空 instance/、backups/ 等目录，
+    # 误运行会造成用户数据丢失，故不进发布包（开发者本地保留即可）
+    "run_full_test.py",
+    "selfcheck_multi.py",
+    "verify_history_bug.js",
+    "verify_history_real.js",
 }
-EXCLUDE_SUFFIXES = (".pyc", ".pyo", ".log", ".db", ".sqlite3")
+# 后缀精确排除（编译产物 / 运行时数据 / 凭据密钥）
+EXCLUDE_SUFFIXES = (
+    ".pyc", ".pyo", ".log", ".db", ".sqlite3",
+    # 敏感凭据文件：私钥 / 证书，泄露后可被攻击者解密会话/通信
+    ".key", ".pem", ".crt", ".p12", ".pfx",
+)
+# 文件名模式排除（glob 风格）：匹配 .env*、*.bak、*~、__pycache__ 等
+# 注意：os.path.split 用 os.sep 切分路径，故此模式作用于文件名部分
+EXCLUDE_NAME_PATTERNS = (
+    ".env",  # .env / .env.local / .env.production 等敏感环境变量
+    ".env.local",
+    ".env.production",
+    ".env.development",
+)
+# 名字以这些子串开头/结尾时排除（兜底，防止遗漏敏感配置）
+EXCLUDE_NAME_STARTS = (".env",)
+EXCLUDE_NAME_ENDS = (".bak", ".orig", ".swp", ".tmp", "~")
 
 
 def get_version():
@@ -76,6 +102,15 @@ def should_exclude(path):
         return True
     if name.lower().endswith(EXCLUDE_SUFFIXES):
         return True
+    # .env 系列：.env / .env.local / .env.production 等敏感环境变量文件
+    # 必须在发布包中剔除，否则数据库密码、SECRET_KEY、第三方 token 全部泄露
+    lower = name.lower()
+    for prefix in EXCLUDE_NAME_STARTS:
+        if lower.startswith(prefix):
+            return True
+    for suffix in EXCLUDE_NAME_ENDS:
+        if name.endswith(suffix):
+            return True
     return False
 
 

@@ -120,6 +120,13 @@ def verify_password(password):
     return None
 
 def setup_user(username, password, role=10):
+    """初始化面板时创建首个管理员账号。
+
+    关键：必须在 _lock 内检查 users 是否已非空，仅当 users 为空时才允许创建。
+    防止抢注攻击：路由层 /api/setup 虽先调 is_configured() 拦截，但两个并发请求
+    可能同时通过 is_configured() 检查（TOCTOU），随后都进入 setup_user 写入，
+    导致首个管理员账号被抢注或产生两个管理员。锁内二次校验杜绝该竞态。
+    """
     valid, msg = validate_username(username)
     if not valid:
         return False, msg
@@ -128,7 +135,12 @@ def setup_user(username, password, role=10):
         return False, msg
     with _lock:
         users = _read_locked()
-        # 检查用户是否已存在，避免重复创建或覆盖现有管理员
+        # 锁内二次校验：若已存在任何用户（说明面板已被初始化过），
+        # 即使路由层 is_configured() 因 TOCTOU 未拦住，这里也必须拒绝创建。
+        # 否则攻击者可在合法管理员 setup 过程中抢先创建管理员账号劫持面板。
+        if users:
+            return False, "面板已初始化"
+        # 检查用户是否已存在（理论上 users 为空时永远 False，但保持防御）
         if any(u.get("username") == username for u in users):
             return False, "用户名已存在"
         users.append({

@@ -83,8 +83,25 @@ def save(url):
         return
     if not _is_safe_url(url):
         return
-    with open(WALLPAPER_FILE, "w", encoding="utf-8") as f:
-        json.dump({"url": url, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f, ensure_ascii=False)
+    # 原子写：先用 tmp 文件写入再 os.replace 覆盖目标。
+    # 旧实现直接 open(WALLPAPER_FILE, "w") 截断写，若 json.dump 中途异常（磁盘满/权限错误）
+    # 目标文件已被截断，原壁纸配置丢失且不可恢复。改为 tmp 中转保证原子性。
+    d = os.path.dirname(WALLPAPER_FILE)
+    os.makedirs(d, exist_ok=True)
+    tmp = WALLPAPER_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"url": url, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, WALLPAPER_FILE)
+        tmp = None  # 标记已成功 replace，finally 不再删除
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def clear():

@@ -125,13 +125,26 @@ class CommandScanner:
             return {}
 
     def scan_by_plugin(self, plugin_name):
-        pdir = current_app.config["TOOLDELTA_CLASSIC_PLUGIN_PATH"]
-        for d in [plugin_name, plugin_name + "+disabled"]:
-            full = os.path.join(pdir, d)
+        # 路径遍历防护：plugin_name 直接来自 request.args（routes/api.py commands_by_plugin），
+        # 若含 "../" 可逃逸出 TOOLDELTA_CLASSIC_PLUGIN_PATH，扫描到插件目录外的文件。
+        # 这里取 basename 并校验规范化后的路径仍在 pdir 内，杜绝跨目录访问。
+        if not isinstance(plugin_name, str) or not plugin_name:
+            return None
+        # 拒绝路径分隔符与危险字符：合法插件名只含字母/数字/下划线/连字符/中文
+        safe_name = os.path.basename(plugin_name.replace("\\", "/"))
+        if safe_name != plugin_name or "/" in plugin_name or "\\" in plugin_name:
+            return None
+        # 二次校验：规范化后路径必须仍在 pdir 内（防止符号链接/.. 等绕过 basename）
+        pdir = os.path.realpath(current_app.config["TOOLDELTA_CLASSIC_PLUGIN_PATH"])
+        for d in [safe_name, safe_name + "+disabled"]:
+            full = os.path.realpath(os.path.join(pdir, d))
+            # 前缀校验：full 必须以 pdir + os.sep 开头，确保未逃逸
+            if not full.startswith(pdir + os.sep) and full != pdir:
+                continue
             if os.path.isdir(full):
-                commands = self.scan_plugin(full, plugin_name)
+                commands = self.scan_plugin(full, safe_name)
                 return {
-                    "plugin": plugin_name,
+                    "plugin": safe_name,
                     "is_enabled": not d.endswith("+disabled"),
                     "commands": commands,
                     "count": len(commands),

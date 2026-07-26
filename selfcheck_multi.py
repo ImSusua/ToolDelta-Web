@@ -31,6 +31,20 @@ import sys
 import time
 import zipfile
 
+# 防误运行保护：本脚本含破坏性副作用（每轮清空 instance/、backups/、plugin_market/、
+# bridge_plugin/ 目录并重建隔离 TOOLDELTA_DIR），若被测试框架（pytest）/IDE 自动 import
+# 会造成用户数据丢失。仅在以下情况允许执行：
+# 1. 直接运行（python3 selfcheck_multi.py，此时 __name__ == "__main__"）
+# 2. 显式设置 RUN_SELFCHECK_MULTI=1 环境变量（用于 CI 编排调用）
+# 未满足以上任一条件时立即 raise ImportError，阻止副作用代码执行。
+_RUN_ALLOWED = __name__ == "__main__" or os.environ.get("RUN_SELFCHECK_MULTI") == "1"
+if not _RUN_ALLOWED:
+    raise ImportError(
+        "selfcheck_multi.py 含破坏性副作用（每轮清空 instance/、backups/ 等目录），"
+        "禁止 import。如需运行请直接执行：python3 selfcheck_multi.py，"
+        "或设置 RUN_SELFCHECK_MULTI=1 环境变量。"
+    )
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(ROOT)
 sys.path.insert(0, ROOT)

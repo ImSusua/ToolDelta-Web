@@ -10,6 +10,20 @@ import zipfile
 import time
 import subprocess
 
+# 防误运行保护：本脚本含破坏性副作用（清空 instance/、backups/、plugin_market/、
+# bridge_plugin/ 目录并重建 TOOLDELTA_DIR），若被测试框架（pytest）/IDE 自动 import
+# 会造成用户数据丢失。仅在以下情况允许执行：
+# 1. 直接运行（python3 run_full_test.py，此时 __name__ == "__main__"）
+# 2. 显式设置 RUN_FULL_TEST=1 环境变量（用于 selfcheck_multi.py 编排调用）
+# 未满足以上任一条件时立即 raise ImportError，阻止副作用代码执行。
+_RUN_ALLOWED = __name__ == "__main__" or os.environ.get("RUN_FULL_TEST") == "1"
+if not _RUN_ALLOWED:
+    raise ImportError(
+        "run_full_test.py 含破坏性副作用（清空 instance/、backups/ 等目录），"
+        "禁止 import。如需运行请直接执行：python3 run_full_test.py，"
+        "或设置 RUN_FULL_TEST=1 环境变量。"
+    )
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
