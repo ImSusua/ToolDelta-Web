@@ -374,7 +374,7 @@ class ToolDeltaManager:
             top = ""
             if names and "/" in names[0]:
                 top = names[0].split("/", 1)[0] + "/"
-            os.makedirs(td_dir, exist_ok=True)
+            os.makedirs(td_dir, exist_ok=True, mode=0o700)
             abs_td_dir = os.path.abspath(td_dir)
             with zipfile.ZipFile(zip_path) as z:
                 for info in z.infolist():
@@ -391,18 +391,35 @@ class ToolDeltaManager:
                     if dest != abs_td_dir and not dest.startswith(abs_td_dir + os.sep):
                         raise ValueError("出厂包路径越权: " + info.filename)
                     if info.filename.endswith("/"):
-                        os.makedirs(dest, exist_ok=True)
+                        os.makedirs(dest, exist_ok=True, mode=0o700)
                     else:
                         parent = os.path.dirname(dest)
                         if parent:
-                            os.makedirs(parent, exist_ok=True)
-                        with z.open(info) as src, open(dest, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
+                            os.makedirs(parent, exist_ok=True, mode=0o700)
+                        # 权限收敛:解压出的文件可能含配置(服务器密码/token),
+                        # open(dest, "wb") 默认 mode 0o644,同主机其他用户可读。
+                        # 用 os.open(O_CREAT, 0o600) 预创建,消除 TOCTOU 窗口。
+                        dfd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                        try:
+                            with os.fdopen(dfd, "wb") as dst, z.open(info) as src:
+                                shutil.copyfileobj(src, dst)
+                        except Exception:
+                            try:
+                                os.close(dfd)
+                            except OSError:
+                                pass
+                            raise
             if not self._is_valid_main(main_py):
                 return False, "解压完成但 main.py 未生成或无效，请检查出厂包"
             return True, "已从出厂包解压主程序"
         except Exception as e:
-            return False, f"解压出厂包失败: {e}"
+            # 详情记日志,对客户端只返回通用消息,避免 str(e) 泄露 zip_path/td_dir 绝对路径
+            try:
+                from app.log_service import log_service
+                log_service.error("解压出厂包失败: " + str(e), "TOOLDELTA")
+            except Exception:
+                pass
+            return False, "解压出厂包失败,请查看日志"
 
     def _ensure_dependencies(self):
         """判断 ToolDelta 主程序依赖是否已就绪（就绪判定 + 必要的安装触发）。
@@ -423,7 +440,14 @@ class ToolDeltaManager:
             dependency_service.start_install()  # 幂等：已在装/已装则无副作用
             return False, "检测到缺失运行依赖，正在后台安装，完成后将自动启动"
         except Exception as e:
-            return False, "依赖检查异常: " + str(e)
+            # 详情记日志,对客户端只返回通用消息,避免 str(e) 泄露服务器路径/
+            # 解释器路径等(与 _start_after_deps 的脱敏策略一致)
+            try:
+                from app.log_service import log_service
+                log_service.error("依赖检查异常: " + str(e), "TOOLDELTA")
+            except Exception:
+                pass
+            return False, "依赖检查异常,请查看日志"
 
     def start(self):
         with self._lock:
@@ -493,7 +517,10 @@ class ToolDeltaManager:
             except Exception:
                 pass
             try:
-                self._broadcast("system", "后台启动失败: " + str(e))
+                # 与 _spawn 一致:广播脱敏短消息,避免 str(e) 泄露绝对路径(如
+                # FileNotFoundError 的 /root/.pyenv/.../python3.12、PermissionError 的
+                # /opt/ToolDelta/main.py 等)。详情记日志即可,前端只需告知"失败"。
+                self._broadcast("system", "后台启动失败,请查看日志")
             except Exception:
                 pass
         finally:

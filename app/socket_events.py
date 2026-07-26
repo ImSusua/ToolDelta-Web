@@ -127,8 +127,16 @@ def init_socketio(socketio):
                 o = urlparse(origin)
                 # 比较 Origin 的 host:port 与当前请求 Host 头(反代下已透传真实 host)
                 # 仅 host+port 比较,scheme 不校验(ws/wss 混用属配置问题,非 Origin 越权)
-                if o.hostname and o.hostname != request.host.split(":")[0]:
-                    return False
+                # 关键修复:旧实现仅比较 hostname 未比较 port,同主机不同端口的恶意页面
+                # 可建立 WebSocket 连接(若 SOCKETIO_CORS_ALLOWED_ORIGINS 被误配为通配,
+                # 框架层 CORS 兜底失效时此处成为最后防线)。
+                if o.hostname:
+                    req_host, _, req_port = request.host.partition(":")
+                    if o.hostname != req_host:
+                        return False
+                    # 若 Origin 含端口,则端口也须匹配(防御同主机不同端口的跨站页面)
+                    if o.port is not None and req_port and str(o.port) != req_port:
+                        return False
             except Exception:
                 # 解析异常时 fail-closed 拒绝,避免畸形 Origin 绕过校验
                 return False

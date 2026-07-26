@@ -21,13 +21,20 @@ def logs_page():
     return render_template("logs.html")
 
 def _validate_log_date(date):
-    """校验日志日期参数，仅允许 YYYY-MM-DD 格式，防止路径遍历。"""
+    """校验日志日期参数，仅允许 YYYY-MM-DD 格式，防止路径遍历。
+
+    与 log_service.get_log_file 的 fullmatch 规则保持一致,
+    避免路由层校验比服务层宽松(纵深防御一致性)。
+    """
     if date is None:
         return None
     date = date.strip()
     if not date:
         return None
-    if len(date) != 10 or not date.replace("-", "").isdigit():
+    # 严格 fullmatch:旧实现仅校验 len==10 + replace("-","").isdigit(),
+    # 形如 "20240123--" / "2024-01-0-" 等可绕过(虽下游 log_service 会再次拒绝)
+    import re
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date):
         return None
     return date
 

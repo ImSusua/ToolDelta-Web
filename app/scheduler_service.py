@@ -37,9 +37,11 @@ class SchedulerService:
     def init_app(self, app):
         # 快照路径（仅此处依赖 app，之后线程内不再使用 current_app）
         self._data_path = os.path.join(app.instance_path, _DATA_FILE)
-        os.makedirs(os.path.dirname(self._data_path), exist_ok=True)
         # 目录权限收敛:与 user.json / server_conn.json / connection_service 一致
         # scheduler.json 含定时命令(可能含敏感参数),同主机其他用户不应读取
+        # makedirs 时直接指定 mode=0o700,消除"先创建 0o755 再 chmod"的 TOCTOU 窗口
+        # (与 config.py / market_service.py / log_service.py 一致)
+        os.makedirs(os.path.dirname(self._data_path), exist_ok=True, mode=0o700)
         try:
             os.chmod(os.path.dirname(self._data_path), 0o700)
         except OSError:
@@ -386,8 +388,11 @@ class SchedulerService:
                         err_reason = str(send_err)
                     job["last_error"] = now.strftime(_FMT) + " " + err_reason
                     try:
+                        # job['name'] 用户可控,走 sanitize_for_log 防日志注入
+                        # (与 routes/auth.py:audit、routes/watchdog.py:_audit 一致)
                         log_service.warn(
-                            f"定时任务未执行({err_reason}): {job['name']}", "SCHEDULER"
+                            f"定时任务未执行({err_reason}): {log_service.sanitize_for_log(job['name'])}",
+                            "SCHEDULER"
                         )
                     except Exception:
                         pass
@@ -395,8 +400,15 @@ class SchedulerService:
                 job["last_run"] = now.strftime(_FMT)
                 job["run_count"] = job.get("run_count", 0) + 1
                 try:
+                    # 关键修复(凭据泄露 + 日志注入):
+                    #   1) job['name'] 用户可控,走 sanitize_for_log 防日志注入
+                    #   2) 旧实现记录完整 cmd,可能含 `op 用户名 密码` / `login token=xxx`
+                    #      等敏感参数。log_service._redact 的正则覆盖有限(如 `op` 后跟
+                    #      裸密码不含字段名时无法匹配),仅记录命令长度避免凭据落盘。
                     log_service.info(
-                        f"定时任务执行: {job['name']} -> {cmd}", "SCHEDULER"
+                        f"定时任务执行: {log_service.sanitize_for_log(job['name'])} "
+                        f"(命令长度 {len(cmd)})",
+                        "SCHEDULER"
                     )
                 except Exception:
                     pass
@@ -405,7 +417,8 @@ class SchedulerService:
                 job["last_run"] = now.strftime(_FMT)
                 try:
                     log_service.error(
-                        f"定时任务失败: {job['name']}: {e}", "SCHEDULER"
+                        f"定时任务失败: {log_service.sanitize_for_log(job['name'])}: {e}",
+                        "SCHEDULER"
                     )
                 except Exception:
                     pass

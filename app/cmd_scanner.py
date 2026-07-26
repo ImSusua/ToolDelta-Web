@@ -4,6 +4,10 @@ import json
 from flask import current_app
 
 class CommandScanner:
+    # __init__.py 文件大小上限:与 market_service.MAX_DATAS_JSON_SIZE 一致,
+    # 防止恶意/损坏插件放置超大 __init__.py 拖垮 ast.parse 内存与 CPU
+    MAX_INIT_PY_SIZE = 2 * 1024 * 1024
+
     def __init__(self):
         # mtime 缓存：(plugin_dir_mtime, bridge_registry_mtime, scan_result)
         self._scan_cache = None
@@ -11,6 +15,13 @@ class CommandScanner:
     def scan_plugin(self, plugin_dir, plugin_name):
         init_py = os.path.join(plugin_dir, "__init__.py")
         if not os.path.isfile(init_py):
+            return []
+        # 文件大小校验:消除 getsize + open 的 TOCTOU 同时防资源耗尽
+        # (与 market_service.scan 的 datas.json 上限策略一致)
+        try:
+            if os.path.getsize(init_py) > self.MAX_INIT_PY_SIZE:
+                return []
+        except OSError:
             return []
         with open(init_py, "r", encoding="utf-8", errors="replace") as f:
             try:

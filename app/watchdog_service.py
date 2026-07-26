@@ -46,8 +46,10 @@ class WatchdogService:
     def init_app(self, app):
         # 快照路径（仅此处依赖 app，之后线程内不再使用 current_app）
         self._config_path = os.path.join(app.instance_path, "watchdog.json")
-        os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
         # 目录权限收敛:与 user.json / scheduler.json 一致
+        # makedirs 时直接指定 mode=0o700,消除"先创建 0o755 再 chmod"的 TOCTOU 窗口
+        # (与 config.py / market_service.py / log_service.py 一致)
+        os.makedirs(os.path.dirname(self._config_path), exist_ok=True, mode=0o700)
         try:
             os.chmod(os.path.dirname(self._config_path), 0o700)
         except OSError:
@@ -69,11 +71,15 @@ class WatchdogService:
             pass
 
         # 启动后台监控线程（daemon）
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(
-                target=self._loop, daemon=True, name="watchdog-monitor"
-            )
-            self._thread.start()
+        # 关键修复(竞态):is_alive 检查与 Thread 创建不在锁内时,
+        # 测试/热重载场景下两个调用方可能同时通过检查各自创建线程,
+        # 导致同一崩溃被双重重启。与 scheduler_service.init_app 一致在锁内完成。
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._loop, daemon=True, name="watchdog-monitor"
+                )
+                self._thread.start()
 
     # ─── 配置持久化 ───────────────────────────────────────────
 

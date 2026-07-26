@@ -600,9 +600,16 @@ class DependencyService:
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
-            self._append_log("✘ 安装进程异常: " + str(e))
-            self._append_log(tb)
-            self._fail_install("安装异常: " + str(e))
+            # 完整 traceback 输出到 stderr(不返回前端):
+            # 含源文件绝对路径/行号,泄露服务器目录结构。
+            # log_tail 仅 admin 可见(role==10),但仍应脱敏避免内部路径扩散。
+            try:
+                import sys as _sys
+                _sys.stderr.write("[DEP_INSTALL] " + tb)
+            except Exception:
+                pass
+            self._append_log("✘ 安装进程异常: " + type(e).__name__)
+            self._fail_install("安装异常,请查看服务器日志")
 
     def ensure_installed_blocking(self, timeout=30):
         """供 start() 在拉起主程序前调用：若已就绪立即返回 True；
@@ -616,6 +623,31 @@ class DependencyService:
         if not waited and self._status == "installing":
             return False, "依赖仍在后台初始化中（约 %d%%），请稍候片刻后重试启动" % self._progress
         return False, "ToolDelta 依赖安装失败：" + (self._error or "未知错误")
+
+    @staticmethod
+    def _mask_cmd_paths(cmd):
+        """对 pip 命令中的绝对路径做脱敏,仅保留 basename,避免 log_tail
+        经 WebSocket/HTTP 暴露给前端时泄露服务器目录结构。
+
+        - python 解释器路径(/root/.pyenv/.../python3.12)→ python3.12
+        - -r /abs/path/requirements.txt → -r requirements.txt
+        - --find-links /abs/wheels → --find-links wheels
+        - 其他参数(开关/包名)原样保留
+        与 tooldelta_manager._start_after_deps 的脱敏策略一致。
+        """
+        masked = []
+        for arg in cmd:
+            if not isinstance(arg, str):
+                masked.append(str(arg))
+                continue
+            # 仅对绝对路径或含分隔符的路径做 basename 替换,
+            # 包名(如 "requests==2.31.0")、开关(如 "--no-input")原样保留
+            if (arg.startswith("/") or "\\" in arg or arg.count("/") > 0) and len(arg) > 1:
+                # 保留 -r / --find-links 等开关本身,只对紧跟其后的路径值脱敏
+                masked.append(os.path.basename(arg) or arg)
+            else:
+                masked.append(arg)
+        return masked
 
     def _append_log(self, line):
         self._log.append(line)
@@ -762,7 +794,7 @@ class DependencyService:
             "-r", req, "--upgrade", "--no-input", "--root-user-action", "ignore",
             "--break-system-packages",
         ]
-        self._append_log("▶ 执行：" + " ".join(cmd))
+        self._append_log("▶ 执行：" + " ".join(self._mask_cmd_paths(cmd)))
         rc = self._run_pip(cmd, td_dir)
         # 校验依赖是否齐：用 pip_python 的环境做检测，而非当前进程
         if rc == 0 and self._deps_present(python_bin=pip_python):
@@ -810,7 +842,7 @@ class DependencyService:
             # 降低被投毒镜像替换包的风险。
             "-i", "https://pypi.org/simple", "--extra-index-url", best_url,
         ]
-        self._append_log("▶ 执行：" + " ".join(cmd))
+        self._append_log("▶ 执行：" + " ".join(self._mask_cmd_paths(cmd)))
         rc = self._run_pip(cmd, td_dir)
         if rc == 0:
             self._status = "ready"

@@ -22,9 +22,11 @@ def init_app(app):
     """根据 app.instance_path 设置持久化文件路径并创建目录。"""
     global _FILE
     _FILE = os.path.join(app.instance_path, "server_conn.json")
-    os.makedirs(os.path.dirname(_FILE), exist_ok=True)
     # 目录权限收敛:同 instance/secret_key、logs/ 一致,仅本用户可访问
     # (server_conn.json 含 Minecraft 服务器连接 token 明文,同主机其他用户不应读取)
+    # makedirs 时直接指定 mode=0o700,消除"先创建 0o755 再 chmod"的 TOCTOU 窗口
+    # (与 config.py / market_service.py / log_service.py 一致)
+    os.makedirs(os.path.dirname(_FILE), exist_ok=True, mode=0o700)
     try:
         os.chmod(os.path.dirname(_FILE), 0o700)
     except OSError:

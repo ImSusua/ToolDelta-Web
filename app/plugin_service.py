@@ -217,7 +217,8 @@ class PluginService:
 
     def upload_plugin(self, zip_file, name=None):
         pdir = self.get_classic_plugin_path()
-        os.makedirs(pdir, exist_ok=True)
+        # 权限收敛:插件目录可能含 fbtoken/连接配置,与 upload_data_file 一致 0o700
+        os.makedirs(pdir, exist_ok=True, mode=0o700)
         # 用 tempfile.mkdtemp 而非固定目录名 "__upload_temp__"：
         # 固定目录在并发上传时会互相覆盖——A 还在解压时 B 的 shutil.rmtree 会删掉
         # A 的中间产物，或 A 的 finally 把 B 刚写入的目录清空，导致插件损坏或上传失败。
@@ -280,7 +281,7 @@ class PluginService:
                 return False, "插件名不合法"
             if plugin_root == temp_dir:
                 # 扁平结构：先建目录，再把内容移入
-                os.makedirs(target, exist_ok=True)
+                os.makedirs(target, exist_ok=True, mode=0o700)
                 for item in os.listdir(temp_dir):
                     shutil.move(os.path.join(temp_dir, item), target)
             else:
@@ -319,7 +320,8 @@ class PluginService:
         if self._safe_name(name) is None:
             return False
         cfg_dir = self.get_cfg_path()
-        os.makedirs(cfg_dir, exist_ok=True)
+        # 权限收敛:cfg_dir 下的 {plugin}.json 可能含凭据(服务器密码/token)
+        os.makedirs(cfg_dir, exist_ok=True, mode=0o700)
         cfg_path = os.path.join(cfg_dir, f"{name}.json")
         # 原子写：临时文件 + os.replace，避免并发写损坏（与 auth_service 一致）
         with self._cfg_lock:
@@ -354,7 +356,7 @@ class PluginService:
         if self._safe_name(name) is None:
             return False
         data_dir = os.path.join(self.get_data_path(), name)
-        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True, mode=0o700)
         fname = secure_filename(file.filename)
         if not fname:
             return False
@@ -366,14 +368,25 @@ class PluginService:
         # content_length 可能不可靠，保存后再兜底校验
         if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
             return False
-        file.save(path)
-        # 权限收敛:插件数据文件可能含凭据(如 fbtoken 缓存、连接配置),
-        # file.save() 用 open("wb") 默认 mode 0o644,同主机其他用户可读。
-        # 与 save_plugin_config(tempfile.mkstemp 0o600)保持一致。
+        # 关键修复(TOCTOU):旧实现 file.save(path) 用 open("wb") 默认 mode 0o644,
+        # 事后才 chmod 0o600 收敛。save 与 chmod 之间存在 TOCTOU 窗口,同主机其他用户
+        # 可在此期间 open fd 持续读取(即便后续 chmod 也无法关闭已打开的 fd)。
+        # 插件数据文件可能含 fbtoken 缓存/服务器连接配置等凭据,泄露风险高。
+        # 与 connection_service._write_all(mkstemp 0o600 + os.replace) 一致,
+        # 先写临时文件(mkstemp 默认 0o600),再 os.replace 替换最终文件。
+        tmp = None
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+            fd, tmp = tempfile.mkstemp(prefix=f".{fname}.", dir=data_dir)
+            with os.fdopen(fd, "wb") as f:
+                file.save(f)
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
         if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
             try:
                 os.remove(path)
@@ -402,7 +415,7 @@ class PluginService:
         if self._safe_name(name) is None:
             return False
         cfg_dir = self.get_cfg_path()
-        os.makedirs(cfg_dir, exist_ok=True)
+        os.makedirs(cfg_dir, exist_ok=True, mode=0o700)
         fname = secure_filename(file.filename)
         if not fname:
             return False
@@ -413,14 +426,21 @@ class PluginService:
         # 文件大小校验：与 upload_data_file 一致
         if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
             return False
-        file.save(path)
-        # 权限收敛:插件配置文件可能含凭据(服务器密码/token/密钥),
-        # file.save() 用 open("wb") 默认 mode 0o644,同主机其他用户可读。
-        # 与 save_plugin_config(tempfile.mkstemp 0o600)保持一致。
+        # 关键修复(TOCTOU):同 upload_data_file,插件配置文件可能含服务器密码/
+        # token/密钥,泄露风险比数据文件更高。用 mkstemp 0o600 + os.replace 消除窗口。
+        tmp = None
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+            fd, tmp = tempfile.mkstemp(prefix=f".{fname}.", dir=cfg_dir)
+            with os.fdopen(fd, "wb") as f:
+                file.save(f)
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
         if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
             try:
                 os.remove(path)
@@ -542,7 +562,7 @@ class PluginService:
                 # 路径越权校验:相对 staging 目录
                 if not os.path.abspath(local).startswith(os.path.abspath(staging) + os.sep):
                     continue
-                os.makedirs(os.path.dirname(local), exist_ok=True)
+                os.makedirs(os.path.dirname(local), exist_ok=True, mode=0o700)
                 # 流式下载 + 分块写盘,避免大文件一次性载入内存（P2-2）
                 # allow_redirects=False 同上：禁止 3xx 跳转绕过 SSRF 拦截（P1-5）
                 with session.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
@@ -556,15 +576,27 @@ class PluginService:
                     if cl > MAX_FILE_SIZE:
                         return False, f"文件过大: {filepath}"
                     file_total = 0
-                    with open(local, "wb") as f:
-                        for chunk in resp.iter_content(chunk_size=64 * 1024):
-                            file_total += len(chunk)
-                            total_downloaded += len(chunk)
-                            if file_total > MAX_FILE_SIZE:
-                                return False, f"文件过大: {filepath}"
-                            if total_downloaded > MAX_TOTAL_SIZE:
-                                return False, "插件包总大小超过上限"
-                            f.write(chunk)
+                    # 关键修复(TOCTOU):旧实现 open(local, "wb") 默认 mode 0o644,
+                    # 网络插件源下载的 __init__.py/datas.json 等文件对同主机其他用户可读。
+                    # 用 os.open(O_CREAT, 0o600) 预创建文件,消除 TOCTOU 窗口。
+                    lfd = os.open(local, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    try:
+                        with os.fdopen(lfd, "wb") as f:
+                            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                                file_total += len(chunk)
+                                total_downloaded += len(chunk)
+                                if file_total > MAX_FILE_SIZE:
+                                    return False, f"文件过大: {filepath}"
+                                if total_downloaded > MAX_TOTAL_SIZE:
+                                    return False, "插件包总大小超过上限"
+                                f.write(chunk)
+                    except Exception:
+                        # fdopen 失败需手动关闭 fd 避免泄漏
+                        try:
+                            os.close(lfd)
+                        except OSError:
+                            pass
+                        raise
             # 全部下载成功:原子移动 staging → target
             # os.replace 对目录要求源/目标在同一文件系统(pdir 下,满足)
             os.replace(staging, target)
@@ -574,7 +606,13 @@ class PluginService:
             # 异常详情记日志,对客户端只返回通用消息,避免 str(e) 泄露内部网络环境/
             # DNS 错误形态/服务器路径(与 routes/api.py:_internal_error 一致策略)
             try:
-                log_service.error(f"网络安装插件失败 url={market_url} pid={plugin_id}: {e}", "PLUGIN")
+                # 用户可控字段(market_url/plugin_id)走 sanitize_for_log 防日志注入,
+                # 与 routes/auth.py、routes/watchdog.py 的 audit() 一致
+                log_service.error(
+                    f"网络安装插件失败 url={log_service.sanitize_for_log(market_url)} "
+                    f"pid={log_service.sanitize_for_log(str(plugin_id))}: {e}",
+                    "PLUGIN"
+                )
             except Exception:
                 pass
             return False, "安装失败,请查看日志"
