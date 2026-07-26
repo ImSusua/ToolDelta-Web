@@ -136,7 +136,7 @@
         <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">Web 终端登录所需的 fbtoken，可在终端外修改</p>
         <div style="display:flex;gap:8px">
             <label for="fbtokenInput" class="sr-only">fbtoken</label>
-            <div style="position:relative;flex:1">
+            <div class="input-with-toggle" style="flex:1">
                 <input type="password" id="fbtokenInput" placeholder="输入 fbtoken..." style="width:100%;padding:8px 10px;padding-right:40px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
                 <button type="button" class="pw-toggle" aria-pressed="false" aria-label="显示 fbtoken" onclick="toggleFbtokenVisibility(this)">显示</button>
             </div>
