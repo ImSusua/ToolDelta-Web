@@ -91,6 +91,17 @@ class LogService:
     # 单文件轮转时保留的旧档数量：当日志写入超限后保留最近 N 份滚动副本
     MAX_ROTATED_FILES = 5
 
+    # 关键修复(潜在 bug 暴露):sanitize_for_log 在本模块顶部定义为模块级函数,
+    # 但 routes/auth.py、routes/api.py、routes/files.py、routes/watchdog.py、
+    # routes/scheduler.py、routes/connections.py 等多处通过 log_service.sanitize_for_log(...)
+    # 实例方法形式调用。Python 不会自动把模块级函数暴露为实例方法,故这些调用
+    # 会抛 AttributeError,导致 audit() 函数失败,审计日志丢失 + 路由返回 500。
+    # 由于 audit() 未被 try/except 包裹,该异常会冒泡到 errorhandler 影响所有
+    # 调用 audit 的写操作(登录/启动/停止/文件操作/调度/连接/看门狗等)。
+    # 修复:将模块级函数绑定为 staticmethod,使 log_service.sanitize_for_log(...) 可用。
+    # 静态方法保持原语义(无 self/cls 依赖),与模块级函数行为完全一致。
+    sanitize_for_log = staticmethod(sanitize_for_log)
+
     def __init__(self):
         self._logs_dir = None
         self._today = None

@@ -126,6 +126,14 @@ class BackupService:
             zip_path = os.path.join(backup_dir, zip_name)
 
             items, _ = self._collect_backup_items(td_dir)
+            # 关键修复(TOCTOU):旧实现 zipfile.ZipFile(zip_path, "w") 创建文件默认
+            # mode 0o644,事后才 chmod 0o600。在创建与 chmod 之间存在 TOCTOU 窗口,
+            # 同主机其他用户可在此期间 open fd 读取备份 zip(含插件凭据),即便后续
+            # chmod 也无法关闭已打开的 fd。与 _restore_backup_impl 的快照修复一致,
+            # 用 os.open(O_CREAT, 0o600) 预创建文件,再交由 ZipFile 打开(open 不会改
+            # 变已存在文件的权限,故 0o600 保留)。
+            fd = os.open(zip_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.close(fd)
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
                 for fp, arcname in items:
                     z.write(fp, arcname)
@@ -136,14 +144,10 @@ class BackupService:
                 "size": os.path.getsize(zip_path),
             }
             metapath = os.path.join(backup_dir, f"{label}.meta.json")
-            with open(metapath, "w", encoding="utf-8") as f:
+            # 同上:meta 文件也用 os.open 预创建 0o600,消除 TOCTOU 窗口
+            fd = os.open(metapath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False)
-            # 备份产物权限收敛:含插件凭据,同主机其他用户不应读取
-            try:
-                os.chmod(zip_path, 0o600)
-                os.chmod(metapath, 0o600)
-            except OSError:
-                pass
             return meta
 
     def list_backups(self):
@@ -211,12 +215,28 @@ class BackupService:
         if not os.path.isfile(zip_path):
             return False, "备份文件不存在"
 
+        # 备份目录权限再收敛:create_backup 会 chmod 0o700,但若管理员手动预置
+        # backup_dir(如 mkdir 默认 0o755 后拷入 zip),restore 时该目录可能仍过宽。
+        # 恢复期间会创建快照(含插件凭据),必须确保目录不可被同主机其他用户列举。
+        try:
+            os.chmod(backup_dir, 0o700)
+        except OSError:
+            pass
+
         # 恢复前先对当前状态做快照，便于失败回滚
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         snapshot_path = os.path.join(backup_dir, f"__pre_restore_{ts}.zip")
 
         def _make_snapshot():
             items, _ = self._collect_backup_items(td_dir)
+            # 关键修复(TOCTOU + 权限收敛):旧实现直接 zipfile.ZipFile(snapshot_path, "w"),
+            # 默认 mode 0o644(umask 削弱后),整个恢复期间(可能数分钟)快照对同主机其他
+            # 用户可读。快照含完整插件配置/数据(可能含凭据),与 create_backup 的 zip
+            # 一致需 0o600。create_backup 用事后 chmod 弥补,但 chmod 前仍有 TOCTOU 窗口。
+            # 这里直接用 os.open(O_CREAT, 0o600) 预创建文件,再交由 ZipFile 打开:
+            # open(path, "w") 不会改变已存在文件的权限,故 0o600 保留。
+            fd = os.open(snapshot_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.close(fd)
             with zipfile.ZipFile(snapshot_path, "w", zipfile.ZIP_DEFLATED) as z:
                 for fp, arcname in items:
                     z.write(fp, arcname)

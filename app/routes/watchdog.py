@@ -19,7 +19,11 @@ def _audit(action, detail):
     ②max_restarts=0 让重启次数耗尽后永久放弃守护;③auto_restart=False 等同禁用。
     无审计日志则事后无法区分"合法管理员操作"与"攻击者破坏"。
     """
-    user = session.get("username", "?")
+    # 关键修复(纵深防御):用户名也需 sanitize_for_log,与 routes/auth.py:audit
+    # 和 routes/api.py:audit 保持一致。当前 username 受 _USERNAME_RE 限制不允许
+    # 控制字符故不可利用,但若未来放宽正则(如允许 Unicode U+2028/U+2029 行分隔符)
+    # 则此处会成为日志注入入口。统一调用 sanitize_for_log 防御未来变更。
+    user = log_service.sanitize_for_log(session.get("username", "?"))
     try:
         log_service.info(
             f"[{user}] {action}: {log_service.sanitize_for_log(detail)}",

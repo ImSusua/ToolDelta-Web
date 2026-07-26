@@ -3,11 +3,47 @@ import sys
 import threading
 import traceback
 from datetime import timedelta
+from urllib.parse import urlparse
 from flask import Flask, session, redirect, request
 from flask_socketio import SocketIO
 from config import Config
 
 socketio = SocketIO()
+
+
+def _validate_sio_origin(o):
+    """校验单个 Socket.IO CORS origin 字符串是否合法。
+
+    返回 (normalized_origin, error_reason):
+      - 合法: (origin, None)
+      - 非法: (None, reason)
+
+    关键安全约束:
+      1) 拒绝 '*' 通配: Socket.IO 携带会话 cookie,允许任意源 = 任意网站可
+         借受害者 cookie 发起已认证 WebSocket 连接(可读终端输出/触发高危操作)。
+         本面板为高权限管理工具,即便运维误配 '*' 也不能放行,作为安全护栏。
+      2) 仅允许 http/https scheme: 拒绝 file://、ftp://、data: 等无意义协议。
+      3) 必须包含 host: 拒绝裸 scheme、纯路径等畸形值。
+      4) 不允许 path/query/fragment: CORS origin 仅含 scheme://host[:port],
+         带 path 的值在浏览器层面不会匹配任何实际请求 origin,属于配置错误。
+      5) 标准化: scheme/host 小写、去除末尾斜杠,避免大小写/尾斜杠差异导致
+         白名单条目失效(Flask-SocketIO 内部用字符串精确匹配,不做归一化)。
+    """
+    if o == "*":
+        return None, "通配符 * 被禁止(Socket.IO 携带会话 cookie,不允许跨站通配)"
+    if not o:
+        return None, "空字符串"
+    try:
+        parsed = urlparse(o)
+    except Exception as e:
+        return None, f"URL 解析失败: {e}"
+    if parsed.scheme not in ("http", "https"):
+        return None, f"协议必须为 http/https,实际为 {parsed.scheme or '空'}"
+    if not parsed.netloc:
+        return None, "缺少 host"
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        return None, "origin 仅允许 scheme://host[:port],不应包含 path/query/fragment"
+    return f"{parsed.scheme}://{parsed.netloc.rstrip('/')}", None
 
 
 def _thread_excepthook(args):
@@ -40,7 +76,18 @@ def create_app():
     app.config.from_object(Config)
     web_data_dir = app.config.get("WEB_DATA_DIR")
     if web_data_dir:
-        os.makedirs(web_data_dir, exist_ok=True)
+        # 权限收敛: 与 log_service.py 的 logs_dir 保持一致使用 0o700。
+        # WEB_DATA_DIR 存放用户偏好/收藏等数据,部分字段可能含用户标识/路径等
+        # 敏感信息,不应被同主机其他用户读取。直接 makedirs(mode=0o700) 避免
+        # open 创建子文件与事后 chmod 之间的 TOCTOU 窗口被同主机用户抢 fd。
+        # makedirs 的 mode 会被进程 umask 削弱,但 0o700 不含 group/other 位,
+        # umask 无法进一步削弱它(umask 只能"收紧"不能"放宽")。
+        os.makedirs(web_data_dir, mode=0o700, exist_ok=True)
+        # 兜底已存在目录(历史版本以 0o755 创建)的权限,避免遗留目录过宽
+        try:
+            os.chmod(web_data_dir, 0o700)
+        except OSError:
+            pass
     _flask_env = os.environ.get("FLASK_ENV", "production").lower()
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0 if _flask_env == "development" else 31536000
     app.config["SESSION_PERMANENT"] = True
@@ -82,9 +129,42 @@ def create_app():
 
     # Socket.IO CORS:默认仅允许同源(携带会话 cookie 时禁止任意跨域连接),
     # 生产可通过环境变量 SOCKETIO_CORS_ALLOWED_ORIGINS 配置逗号分隔白名单(如 https://panel.example.com)
+    # 关键安全约束(见 _validate_sio_origin):
+    #   - 拒绝 '*' 通配: Socket.IO 携带会话 cookie,允许任意源 = CSWSH 风险,
+    #     即便运维误配 '*' 也不能放行(作为安全护栏)。
+    #   - 仅允许 http/https scheme + host[:port],拒绝裸域名/file:// 等。
+    #   - 非法条目告警并跳过,而非静默接受;全部非法则回退到同源 None,
+    #     避免 Flask-SocketIO 把空 list 误解为"允许任意 origin"。
+    # 防御纵深: socket_events.py 的 _session_valid 在每个事件 handler 入口
+    # 额外校验 Origin 头,即使此处配置被绕过/框架版本差异也能拦截 CSWSH。
     _sio_origins_env = os.environ.get("SOCKETIO_CORS_ALLOWED_ORIGINS", "").strip()
     if _sio_origins_env:
-        _sio_origins = [o.strip() for o in _sio_origins_env.split(",") if o.strip()]
+        _sio_origins = []
+        for _o in _sio_origins_env.split(","):
+            _o = _o.strip()
+            if not _o:
+                continue
+            _norm, _err = _validate_sio_origin(_o)
+            if _norm:
+                # 去重(标准化后可能出现重复,如 https://a.com 与 https://a.com/)
+                if _norm not in _sio_origins:
+                    _sio_origins.append(_norm)
+            else:
+                # 非法 origin 告警 + 跳过:绝不静默忽略
+                # (避免管理员误配 * 自以为开放但实际被拒,或误填裸域名导致 CORS 失败)
+                try:
+                    from app.log_service import log_service as _sio_log
+                    _sio_log.warn(
+                        f"Socket.IO CORS origin 被拒绝: {_o!r} ({_err})",
+                        source="SYSTEM"
+                    )
+                except Exception:
+                    pass
+        if not _sio_origins:
+            # 全部条目都非法时回退到同源 None:
+            # Flask-SocketIO 收到空 list 行为未定义(可能被解释为允许任意 origin,
+            # 与安全意图相反),统一回退 None(仅同源)更安全。
+            _sio_origins = None
     else:
         # 同源:Flask-SocketIO 中 None 表示仅允许同源连接
         _sio_origins = None
@@ -204,13 +284,19 @@ def create_app():
         # 可通过环境变量 CSP_CONNECT_SRC 显式收紧为 'self' wss://<host>
         # 新增 form-action 'self':XSS 可构造表单向攻击者服务器提交数据,form-action 限制
         # 表单提交目标
+        # img-src 关键修复:旧 HTTP 头为 'self' data: 但 base.html meta 为
+        # 'self' data: blob: https:,浏览器取并集使 https: 生效,XSS 后可外泄数据
+        # 到任意 HTTPS 服务器。现统一为 'self' data: cdn.8845.top(壁纸 CDN 白名单),
+        # 仅允许该可信 CDN 的图片加载,而非任意 https: 站点。
+        # 管理员手动设置的壁纸 URL 也需在 cdn.8845.top 白名单内,否则无法显示
+        # (建议引导用户使用 fetch_new 随机壁纸而非手动 URL)。
         _csp_connect = os.environ.get("CSP_CONNECT_SRC", "'self' ws: wss:")
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
+            "img-src 'self' data: cdn.8845.top; "
             "connect-src " + _csp_connect + "; "
             "font-src 'self' data:; "
             "object-src 'none'; "

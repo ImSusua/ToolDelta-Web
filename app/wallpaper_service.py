@@ -3,39 +3,42 @@ import json
 import time
 import re
 import socket
+import ssl
 import urllib.request
 import urllib.error
 from urllib.parse import urlparse, urlsplit, urlunsplit
 from ipaddress import ip_address
 
-# SSRF DNS rebinding 防护:在 getaddrinfo 校验后到 urllib 实际连接之间,
-# DNS 记录可能被切换到内网地址。通过自定义 HTTPRedirectHandler + HTTPHandler
-# 把 URL 中的 host 改写为已校验的 IP,并保留 Host 头供虚拟主机使用。
-# 对 HTTPS 证书校验需通过未指定 context 让 urllib 默认校验(SNI=IP 时 cert
-# 不匹配会失败,但对壁纸 CDN 通常走 HTTP 或 IP 也有 SAN,可接受降级关闭校验)。
+# SSRF 防护策略说明(关键修复):
+#
+# 旧实现用自定义 HTTPSHandler 把 URL host 改写为已校验 IP 实现 IP pinning,
+# 但 HTTPS 时 SNI=IP 与证书域名不匹配,故彻底关闭证书校验(CERT_NONE)。
+# 这导致 MITM 可在网络路径上劫持与 cdn.8845.top 的 HTTPS 连接,
+# 返回恶意内容/伪造壁纸 URL,用户每次刷新页面都加载攻击者资源(可追踪 IP/UA)。
+#
+# 修复:对 HTTPS 不改写 host(保留 urllib 默认 DNS + 证书校验 + SNI),
+# 仅做内网 IP 拦截(_is_safe_url 已校验 DNS 解析结果非内网)。
+# DNS rebinding 窗口虽存在但风险可接受:
+#   1) cdn.8845.top 是硬编码可信源,DNS 劫持需控制递归 DNS 服务器;
+#   2) 禁止跟随重定向(3xx 直接抛异常),攻击者无法用 302 重定向到内网;
+#   3) _is_safe_url 在请求前后各校验一次 final_url;
+#   4) 证书校验保留可防 MITM 篡改响应内容。
+# 对 HTTP(明文)仍保留 IP pinning(无证书校验问题,IP pinning 足以阻断 rebinding)。
+#
+# 权衡:DNS rebinding(低概率,需控制 DNS 服务器) vs MITM(高概率,公共 WiFi/BGP 劫持)
+# 两者无法同时完美防御,选择保留证书校验(MITM 风险更高且更易实施)。
 
-class _SSRFSafeHandler(urllib.request.HTTPSHandler):
-    """把对指定 host 的请求改写为直连已校验的 IP,保留 Host 头用于虚拟主机。
-    HTTPSHandler 已继承 HTTPHandler,故同时覆盖 http_open/https_open。"""
+
+class _SSRFSafeHTTPHandler(urllib.request.HTTPHandler):
+    """HTTP(明文)请求的 SSRF 防护:把 host 改写为已校验的 IP,保留 Host 头。
+    明文无证书校验问题,IP pinning 足以阻断 DNS rebinding。"""
 
     def __init__(self, host, ip):
         self._host = host
         self._ip = ip
-        # HTTPS 关闭证书校验(cert 是域名,IP 直连时 SNI=IP 不匹配);
-        # IP 已校验非内网,降级关闭 verify 可接受
-        import ssl
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-        super().__init__(context=ssl_ctx)
+        super().__init__()
 
     def http_open(self, req):
-        return self._open(req, https=False)
-
-    def https_open(self, req):
-        return self._open(req, https=True)
-
-    def _open(self, req, https=False):
         parts = urlsplit(req.full_url)
         if parts.hostname == self._host:
             netloc = self._ip
@@ -44,8 +47,6 @@ class _SSRFSafeHandler(urllib.request.HTTPSHandler):
             new_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
             req.full_url = new_url
             req.add_header("Host", self._host)
-        if https:
-            return super().https_open(req)
         return super().http_open(req)
 
 WALLPAPER_FILE = None
@@ -140,8 +141,11 @@ def fetch_new():
         class _NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None  # 返回 None 阻止重定向，urllib 会抛 HTTPError
-        # SSRF-safe opener:把 host 改写为已校验的 IP,保留 Host 头供虚拟主机使用
-        opener = urllib.request.build_opener(_SSRFSafeHandler(host, safe_ip), _NoRedirect)
+        # SSRF-safe opener:HTTP 走 IP pinning(改写 host),HTTPS 走默认 urllib
+        # (保留证书校验 + SNI,见模块顶部策略说明)。
+        # cdn.8845.top 是 HTTPS,故实际走 urllib 默认 https_open(证书校验保留),
+        # _SSRFSafeHTTPHandler 仅在 URL 被降级为 http 时生效(防御性兜底)。
+        opener = urllib.request.build_opener(_SSRFSafeHTTPHandler(host, safe_ip), _NoRedirect)
         with opener.open(req, timeout=8) as resp:
             final_url = resp.geturl()
         if final_url and _is_safe_url(final_url):

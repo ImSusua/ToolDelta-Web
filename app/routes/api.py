@@ -2,6 +2,7 @@ import os
 import json
 import socket
 import tempfile
+import threading
 from urllib.parse import urlparse
 from ipaddress import ip_address
 from flask import Blueprint, request, jsonify, current_app, session
@@ -110,6 +111,12 @@ def status():
     # 仅回传面向前端的状态字段,过滤 manual_stop/shutting_down/starting_after_deps
     # 等内部守护标志:这些是实现细节,泄露后无业务用途,反而提示攻击者
     # "面板正在关闭/依赖安装中" 等时机信息便于侧信道利用。
+    # 关键修复:旧实现把 pid 也回传给普通用户(role=1),pid 泄露进程身份
+    # (同/异进程跨重启可关联),在共享主机上为攻击者提供进程信号目标。
+    # 与 /api/tool/output、/api/dependencies 等同类敏感字段一致要求管理员。
+    # 普通用户仅需 running 布尔判断 UI 状态(是否显示启动按钮),不需要 pid。
+    if session.get("role") != 10:
+        return jsonify({"running": s.get("running", False)})
     return jsonify({
         "running": s.get("running", False),
         "pid": s.get("pid"),
@@ -196,6 +203,13 @@ def dependencies_install():
 
 @bp.route("/plugins")
 def list_plugins():
+    # role 校验:list_plugins 返回已安装插件的 name/dir_name/author/version/
+    # plugin_id/plugin_type/has_readme/has_config 等完整清单。这是「已安装」清单
+    # (不是公共市场目录),攻击者可借此识别插件版本是否存在已知 CVE,辅助定向攻击。
+    # 与同 blueprint 的 /api/plugins/config、/api/plugins/data-files(均要求 role==10)
+    # 保持一致:插件目录结构敏感,普通用户不应枚举。
+    if session.get("role") != 10:
+        return jsonify({"success": False, "error": "无权限"})
     return jsonify(plugin_service.list_plugins())
 
 @bp.route("/plugins/toggle", methods=["POST"])
@@ -250,6 +264,11 @@ def upload_plugin():
 
 @bp.route("/plugins/readme")
 def plugin_readme():
+    # role 校验:README 由插件作者随意编写,可能含敏感示例(token 格式、内部端点、
+    # 调试技巧)。与同 blueprint 的 /api/plugins/config、/api/plugins/data-files
+    # 一致要求管理员,避免普通用户枚举已安装插件并阅读其 README 收集情报。
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "缺少插件名"})
@@ -508,6 +527,18 @@ def commands_stats():
     return jsonify({"total_commands": total_cmds, "total_plugins": total_plugins, "plugins": results})
 
 # ─── 命令收藏（用户级，存于 Web 数据目录的 favorites.json） ────────────────
+# 关键修复(三合一):
+#   1) 串行化锁:旧实现 _load_fav → 修改 → _save_fav 无锁,两并发请求会
+#      各自读取同一份旧数据,后写覆盖先写,丢失其中一方更新(lost-update)。
+#      用 _FAV_LOCK 串行化所有 read-modify-write。
+#   2) 原子写 + 0o600 权限:旧实现 open(path, "w") 默认 mode 0o644,且非原子
+#      (写到一半崩溃会损坏文件)。改用 _atomic_write_text(mkstemp 0o600 + os.replace)。
+#      favorites.json 含用户命令字符串(可能含 token/密码等敏感片段),需 0o600。
+#   3) 每用户上限:旧实现无上限,用户可无限 POST 让 favorites.json 无限增长,
+#      缓慢耗尽磁盘 + 每次 _load_fav 全量 json.load 拖垮内存。设 MAX_FAV_PER_USER=200。
+_FAV_LOCK = threading.Lock()
+MAX_FAV_PER_USER = 200
+
 def _fav_path():
     base = current_app.config.get("WEB_DATA_DIR")
     if not base:
@@ -523,8 +554,8 @@ def _load_fav():
         return {}
 
 def _save_fav(data):
-    with open(_fav_path(), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    # 原子写 + 0o600:避免写到一半崩溃损坏文件,且权限与 fbtoken/server_conn 一致
+    _atomic_write_text(_fav_path(), json.dumps(data, ensure_ascii=False, indent=2))
 
 def _user_favs():
     user = session.get("username") or "default"
@@ -538,7 +569,9 @@ def _set_user_favs(cmds):
 
 @bp.route("/favorites", methods=["GET"])
 def list_favorites():
-    return jsonify({"commands": _user_favs()})
+    # 读操作也持锁,避免与并发 _set_user_favs 的 os.replace 竞态读到半写文件
+    with _FAV_LOCK:
+        return jsonify({"commands": _user_favs()})
 
 @bp.route("/favorites", methods=["POST"])
 def add_favorite():
@@ -550,10 +583,14 @@ def add_favorite():
         return jsonify({"success": False, "error": "命令长度超过 256 字符限制"})
     if any(ord(ch) < 32 for ch in cmd):
         return jsonify({"success": False, "error": "命令包含非法控制字符"})
-    cmds = _user_favs()
-    if cmd not in cmds:
-        cmds.append(cmd)
-        _set_user_favs(cmds)
+    with _FAV_LOCK:
+        cmds = _user_favs()
+        if cmd not in cmds:
+            # 每用户上限:超过则拒绝新增,避免 favorites.json 无限增长拖垮磁盘/内存
+            if len(cmds) >= MAX_FAV_PER_USER:
+                return jsonify({"success": False, "error": f"收藏已达上限({MAX_FAV_PER_USER} 条),请先删除旧的"})
+            cmds.append(cmd)
+            _set_user_favs(cmds)
     return jsonify({"success": True, "commands": cmds})
 
 @bp.route("/favorites", methods=["DELETE"])
@@ -562,8 +599,9 @@ def remove_favorite():
     cmd = (data.get("cmd") or "").strip()
     if not cmd:
         return jsonify({"success": False, "error": "命令不能为空"})
-    cmds = [c for c in _user_favs() if c != cmd]
-    _set_user_favs(cmds)
+    with _FAV_LOCK:
+        cmds = [c for c in _user_favs() if c != cmd]
+        _set_user_favs(cmds)
     return jsonify({"success": True, "commands": cmds})
 
 # ─── 备份 ────────────────────────

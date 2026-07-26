@@ -5,8 +5,9 @@
 """
 import os
 import json
-import uuid
+import tempfile
 import threading
+import uuid
 from datetime import datetime
 
 # 全局文件句柄（由 init_app 设置），未初始化时为 None
@@ -56,22 +57,24 @@ def _write_all(conns):
         return
     d = os.path.dirname(_FILE)
     os.makedirs(d, exist_ok=True)
-    tmp = os.path.join(d, ".server_conn.tmp." + uuid.uuid4().hex)
+    # 关键修复(TOCTOU):旧实现 open(tmp, "w") 创建文件默认 mode 0o644,
+    # os.replace 后 _FILE 也是 0o644,直到后续 os.chmod 才收敛到 0o600。
+    # 在 replace 与 chmod 之间存在 TOCTOU 窗口,同主机其他用户可在此期间
+    # open fd 读取 server_conn.json(含 Minecraft 连接 token),即便后续 chmod
+    # 也无法关闭已打开的 fd → token 泄露。
+    # 修复:用 tempfile.mkstemp 创建临时文件(默认 mode 0o600),写入后
+    # os.replace 保留 0o600 权限,无需事后 chmod。
+    fd, tmp = tempfile.mkstemp(prefix=".server_conn.tmp.", dir=d)
     # try/finally 确保异常路径下清理 tmp：json.dump/flush/fsync 任一抛异常时
     # os.replace 不会执行，tmp 会残留在磁盘上，多次失败累积多个 .server_conn.tmp.* 文件
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(conns, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, _FILE)
         tmp = None  # 标记已成功 replace，finally 不再删除
-        # 收敛权限:含 Minecraft 服务器连接 token,同主机其他用户不可读
-        # (与 auth_service.user.json、config.py.secret_key 保持一致)
-        try:
-            os.chmod(_FILE, 0o600)
-        except OSError:
-            pass
+        # mkstemp 创建的文件已是 0o600,os.replace 保留权限,无需再 chmod
     finally:
         if tmp is not None and os.path.exists(tmp):
             try:

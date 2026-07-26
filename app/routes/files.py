@@ -1,7 +1,7 @@
 import os
 import re
 import shutil
-from flask import Blueprint, request, jsonify, send_file, session, after_this_request, current_app
+from flask import Blueprint, request, jsonify, send_file, session, after_this_request
 from werkzeug.utils import secure_filename
 from app.log_service import log_service
 from config import Config
@@ -49,12 +49,23 @@ def audit(action, detail=""):
     log_service.info(f"[{user}@{ip}] {action} {log_service.sanitize_for_log(detail)}", "AUDIT")
 
 def _client_ip():
-    """获取客户端真实 IP:反代场景下取 X-Forwarded-For 最左值,
-    与 routes/auth.py:_client_ip 行为一致,避免所有审计日志记录为反代 IP。"""
-    if current_app.config.get("BEHIND_PROXY"):
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
+    """获取客户端真实 IP,与 routes/auth.py / routes/api.py 的 _client_ip 行为一致。
+
+    关键修复(X-Forwarded-For 欺骗):
+      旧实现读 request.headers["X-Forwarded-For"] 并取最左值作为客户端 IP,
+      但 XFF 链最左值完全由客户端可写入,攻击者只需发送
+      `X-Forwarded-For: <victim-ip>` 即可让审计日志记录为他人 IP,
+      从而在执行高危文件操作(删 fbtoken/改 ToolDelta基本配置.json)时
+      嫁祸给合法管理员,破坏审计日志取证完整性。
+
+      run.py 中 ProxyFix(x_for=1) 已在 BEHIND_PROXY=1 时正确设置
+      request.remote_addr 为反代写入的 XFF 链最右值(可信值),
+      这里只需返回 request.remote_addr 即可,无需手动解析 XFF。
+
+      auth.py / api.py 的 _client_ip 都已正确实现为
+      `return request.remote_addr or "?"`,本文件此前因误读「与 auth.py 一致」
+      实际写成手动解析 XFF 的不安全实现,现统一修复。
+    """
     return request.remote_addr or "?"
 
 def ok(data=None):

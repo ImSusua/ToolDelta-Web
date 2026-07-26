@@ -113,7 +113,7 @@ def login():
         auth_service.record_login_fail(ip)
         # 日志注入防护：username 未通过校验说明含非法字符（可能含 \n 等控制字符），
         # 直接拼入日志会伪造新的日志行干扰审计排查，必须过滤控制字符
-        log_service.warn(f"[{ip}] 登录失败(非法用户名): {_sanitize_for_log(username)}", "AUDIT")
+        log_service.warn(f"[{ip}] 登录失败(非法用户名): {log_service.sanitize_for_log(username)}", "AUDIT")
         return fail("用户名或密码错误")
     user = auth_service.verify_username_password(username, password)
     if user:

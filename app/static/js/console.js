@@ -54,14 +54,21 @@ function _detectLogLevel(text) {
 
 function appendLine(html) {
     if (!body) return;
-    // XSS 防护：先用正则过滤脚本、事件处理器、data URI 等明显危险内容（作为第一道防线）
-    var safe = (html || '')
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<img[^>]*onerror\s*=[^>]*>/gi, '')
-        .replace(/<svg[^>]*onload\s*=[^>]*>/gi, '')
-        .replace(/<[^>]*\bon[a-z]+\s*=\s*[^>]*/gi, function(m){return m.replace(/on\w+\s*=\s*/gi,'data-removed=');})
-        .replace(/javascript\s*:/gi, 'blocked:')
-        .replace(/data\s*:\s*[^;\s"']*/gi, 'blocked:');
+    // XSS 防护:仅采用 DOMParser 白名单(第二道防线),不再做正则黑名单预处理。
+    // 关键修复:旧实现先用正则黑名单移除 <script>/<img onerror>/on*=/javascript:/data: 等,
+    // 再交给 DOMParser 白名单。但正则黑名单存在两类问题:
+    //   1) 安全性:正则可被 HTML 混淆绕过(如 <scr<script>ipt> 经内层移除后重组为 <script>,
+    //      <img/onerror=...> 用 / 分隔属性绕过 [^>]* 限定,<svg/onload> 同理)。
+    //      保留黑名单会给人以"已过滤"的错觉,实际仍可绕过 → 危险的虚假安全感。
+    //   2) 正确性:黑名单会破坏合法日志内容(如日志中字面出现 "javascript:" / "data: xxx"
+    //      / "onclick" 单词等会被替换为 "blocked:",扭曲用户实际看到的输出)。
+    // DOMParser 白名单已完整覆盖黑名单的所有目标且更严格:
+    //   - <script>/<iframe>/<object>/<embed>/<svg>/<img> 等所有非 <span> 标签被 unwrap(标签删除,文本保留);
+    //   - 所有 on* 事件属性被 removeAttribute;
+    //   - style/id 被移除(防 CSS 注入与锚点定位);
+    //   - href/src/xlink:href 中的 javascript: 与 data: URI 被移除。
+    // 浏览器 HTML 解析器处理所有混淆/编码变体,比正则更可靠。
+    var safe = html || '';
     // 暂停滚动模式下：不判断 atBottom，强制不滚动到底部
     var atBottom = _pauseScroll ? false : (body.scrollHeight - body.scrollTop - body.clientHeight < 50);
     var div = document.createElement('div');

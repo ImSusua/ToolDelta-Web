@@ -7,17 +7,49 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def _load_or_create_secret_key():
     """加载或生成持久化 SECRET_KEY（instance/secret_key），避免会话被伪造（P1-2）。"""
     key_file = os.path.join(BASE_DIR, "instance", "secret_key")
+    key_dir = os.path.dirname(key_file)
     try:
+        # 目录权限收敛:与 log_service.py 的 logs_dir、__init__.py 的 web_data_dir
+        # 保持一致使用 0o700。instance/ 含 secret_key、logs/ 等敏感内容,
+        # 不应被同主机其他用户列举/进入。makedirs(mode=0o700) 直接指定权限,
+        # 0o700 不含 group/other 位,umask 无法进一步削弱(只能收紧不能放宽)。
+        os.makedirs(key_dir, mode=0o700, exist_ok=True)
+        # 兜底已存在目录(历史版本以默认 0o755 创建)的权限
+        try:
+            os.chmod(key_dir, 0o700)
+        except OSError:
+            pass
+
         if os.path.isfile(key_file):
             with open(key_file, "r", encoding="utf-8") as f:
                 k = f.read().strip()
                 if k:
+                    # 历史文件权限归一化:旧版本可能以 0o644 创建(open 默认 mode),
+                    # 启动时统一收紧到 0o600,避免 secret_key 被同主机其他用户读取。
+                    try:
+                        os.chmod(key_file, 0o600)
+                    except OSError:
+                        pass
                     return k
-        os.makedirs(os.path.dirname(key_file), exist_ok=True)
         k = secrets.token_hex(32)
-        with open(key_file, "w", encoding="utf-8") as f:
-            f.write(k)
-        os.chmod(key_file, 0o600)  # 仅本用户可读写
+        # 关键修复(TOCTOU):旧实现 open(key_file, "w") 以默认 mode 0o666 创建文件
+        # (umask 削弱后通常为 0o644),写入 secret 后才 chmod 0o600。在 open 与 chmod
+        # 之间存在时间窗口,同主机其他用户可在此期间 open fd 持续读取 secret_key,
+        # 即便后续 chmod 也无法关闭已打开的 fd → SECRET_KEY 泄露 → 攻击者可伪造
+        # 任意用户会话 cookie。
+        # 修复:用 os.open + O_CREAT 指定 mode=0o600,文件创建即拥有正确权限,
+        # 不存在 TOCTOU 窗口。与 log_service.py 的 _write 实现一致。
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(k)
+        except Exception:
+            # fdopen 失败需手动关闭 fd 避免泄漏
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
         return k
     except Exception:
         # 极端场景（如只读文件系统）退化为内存随机值，绝不阻塞启动
