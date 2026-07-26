@@ -321,7 +321,7 @@ def create_app():
     # ─── 全局错误处理：API 路径返回 JSON 而非 HTML ───
     # 之前路由抛异常会冒到 Flask 默认 500 HTML 页面，前端 fetch 的 r.json() 解析失败
     # 走 catch 分支后丢失服务器错误信息；这里对 /api/ 路径统一返回 JSON 结构
-    from flask import jsonify as _jsonify, request as _req
+    from flask import jsonify as _jsonify, request as _req, abort as _abort
     from app.log_service import log_service as _log
 
     @app.errorhandler(Exception)
@@ -333,7 +333,6 @@ def create_app():
         if _req.path.startswith("/api/"):
             return _jsonify({"success": False, "error": "服务器内部错误，请查看日志"}), 500
         # 非 API 路径走 Flask 默认 HTML 错误页（让浏览器用户看到友好页面）
-        from flask import abort as _abort
         _abort(500)
 
     @app.errorhandler(404)

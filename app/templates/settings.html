@@ -68,6 +68,9 @@
         var level = 'weak';
         if (pw.length >= 12 && hasL && hasD && hasS) level = 'strong';
         else if (pw.length >= 8 && hasL && hasD) level = 'medium';
+        // 防御性白名单:level 拼入 class 属性(pw-bar-<level>),防止未来扩展时
+        // 引入未预期值导致 class 上下文逃逸。与 setup.html 的 checkPwStrength 一致。
+        if (level !== 'weak' && level !== 'medium' && level !== 'strong') level = 'weak';
         var tips = [];
         if (pw.length < 8) tips.push('建议长度至少8位');
         if (!hasL) tips.push('建议包含字母');
@@ -133,12 +136,28 @@
         <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">Web 终端登录所需的 fbtoken，可在终端外修改</p>
         <div style="display:flex;gap:8px">
             <label for="fbtokenInput" class="sr-only">fbtoken</label>
-            <input type="text" id="fbtokenInput" placeholder="输入 fbtoken..." style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
+            <div style="position:relative;flex:1">
+                <input type="password" id="fbtokenInput" placeholder="输入 fbtoken..." style="width:100%;padding:8px 10px;padding-right:40px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
+                <button type="button" class="pw-toggle" aria-pressed="false" aria-label="显示 fbtoken" onclick="toggleFbtokenVisibility(this)">显示</button>
+            </div>
             <button class="btn btn-outline btn-sm" onclick="tdCopy(document.getElementById('fbtokenInput').value, '已复制 fbtoken')" data-tip="复制当前 token" aria-label="复制 fbtoken">复制</button>
             <button class="btn btn-primary btn-sm" onclick="saveFbtoken()">保存</button>
         </div>
         <div id="fbtokenError" style="color:#f87171;font-size:12px;margin-top:6px;display:none"></div>
     </div>
+    <script>
+    // fbtoken 显隐切换:与 connections.js 的 togglePwVisibility 一致,但为避免
+    // 跨页 JS 加载顺序问题(defer 与非 defer 脚本执行时机差异)在此页内独立定义。
+    function toggleFbtokenVisibility(btn){
+        var input = document.getElementById('fbtokenInput');
+        if (!input) return;
+        var isPw = input.type === 'password';
+        input.type = isPw ? 'text' : 'password';
+        btn.setAttribute('aria-pressed', isPw ? 'true' : 'false');
+        btn.textContent = isPw ? '隐藏' : '显示';
+        btn.setAttribute('aria-label', isPw ? '隐藏 fbtoken' : '显示 fbtoken');
+    }
+    </script>
 
     <div class="card" style="margin-bottom:20px">
         <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">关于面板</h2>
