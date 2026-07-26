@@ -648,10 +648,28 @@ class DependencyService:
 
     def _run_pip(self, cmd, cwd):
         """执行 pip 子进程，实时收集日志与进度，返回进程退出码。不设置终态。"""
+        # 环境变量白名单:与 tooldelta_manager._spawn 一致策略。
+        # pip 子进程继承完整 os.environ 会泄露 SECRET_KEY(若通过 env 设置)、
+        # 数据库凭据、云密钥等给 pip 可访问的 setup.py/构建脚本(任意代码执行)。
+        # 仅传 pip 运行必需子集,显式剔除面板内部配置变量。
+        _ENV_WHITELIST = (
+            "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+            "TMPDIR", "TEMP", "TMP", "PYENV_ROOT", "PYTHONPATH", "PYTHONHOME",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+            "SYSTEMROOT", "WINDIR", "APPDATA",
+            "VIRTUAL_ENV",  # pip 在 venv 中运行需识别
+            "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",  # 允许用户预设 pip 源
+        )
+        env = {k: v for k, v in os.environ.items()
+               if k in _ENV_WHITELIST and k not in
+               ("SECRET_KEY", "BEHIND_PROXY", "ALLOW_UNSAFE_WERKZEUG",
+                "SESSION_COOKIE_SECURE", "SESSION_COOKIE_SAMESITE",
+                "CSP_CONNECT_SRC", "ENABLE_HSTS")}
         try:
             proc = subprocess.Popen(
                 cmd, cwd=cwd, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1,
+                env=env,
             )
         except FileNotFoundError:
             self._append_log("✘ 未找到 pip，请先安装 Python 包管理工具 pip")
@@ -659,6 +677,13 @@ class DependencyService:
         except Exception as e:
             self._append_log("✘ 启动安装进程失败：" + str(e))
             return 1
+        # 安装超时看门狗:pip 可能因网络卡顿/镜像源无响应/交互式提示残留而
+        # 长时间挂起,导致 _run_pip 的 for 循环无限阻塞,依赖永远装不完。
+        # 用 watchdog 线程在 PIP_TIMEOUT 秒后强制终止进程,让主循环退出。
+        PIP_TIMEOUT = 600  # 10 分钟,覆盖 grpcio/numpy 等大包编译时间
+        timer = threading.Timer(PIP_TIMEOUT, self._pip_timeout_kill, args=(proc,))
+        timer.daemon = True
+        timer.start()
         try:
             stdout = proc.stdout
             if stdout is None:
@@ -679,6 +704,7 @@ class DependencyService:
             self._append_log("✘ 读取安装输出异常：" + str(e))
             return 1
         finally:
+            timer.cancel()
             # 异常路径下子进程未回收会变僵尸进程：_append_log/_parse_progress/
             # _emit_progress 任一抛异常时，上面 for 循环中断但 pip 子进程可能
             # 仍在运行。多次触发会累积多个僵尸进程。finally 确保 terminate + wait。
@@ -695,6 +721,15 @@ class DependencyService:
                             pass
             except Exception:
                 pass
+
+    def _pip_timeout_kill(self, proc):
+        """pip 超时看门狗回调:强制终止卡住的 pip 进程。"""
+        try:
+            if proc.poll() is None:
+                self._append_log("✘ pip 安装超时(超过 10 分钟),已强制终止。")
+                proc.kill()
+        except Exception:
+            pass
 
     def _try_offline_install(self, td_dir):
         """优先尝试从本地 wheels/ 离线安装，避免联网（共享服务器限流/无外网）。成功返回 True。"""
@@ -768,7 +803,12 @@ class DependencyService:
             pip_python, "-m", "pip", "install", "-e", ".", "--upgrade",
             "--no-input", "--root-user-action", "ignore",
             "--break-system-packages",
-            "-i", best_url, "--extra-index-url", "https://pypi.org/simple",
+            # 供应链安全修复:官方 PyPI 作为主源(-i),镜像源作为 --extra-index-url。
+            # 旧实现用镜像作 -i、官方作 --extra-index-url,pip 会从两个源都查找
+            # 包并选最高版本。若镜像被投毒(上传恶意 numpy-999.0.0),pip 会优先
+            # 从镜像安装恶意包而非官方源。改为官方源为主后,镜像仅作加速回退,
+            # 降低被投毒镜像替换包的风险。
+            "-i", "https://pypi.org/simple", "--extra-index-url", best_url,
         ]
         self._append_log("▶ 执行：" + " ".join(cmd))
         rc = self._run_pip(cmd, td_dir)

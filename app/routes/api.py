@@ -1,6 +1,7 @@
 import os
 import json
 import socket
+import tempfile
 from urllib.parse import urlparse
 from ipaddress import ip_address
 from flask import Blueprint, request, jsonify, current_app, session
@@ -12,6 +13,33 @@ from app.cmd_scanner import cmd_scanner
 from app.log_service import log_service
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _atomic_write_text(path, content, mode=0o600):
+    """原子写文本文件:mkstemp(默认 0o600) + 写入 + fsync + os.replace。
+    避免直接 open(path, "w") 在写入中途崩溃导致原文件被截断损坏,
+    以及"先创建默认 0o644 再 chmod"之间的 TOCTOU 窗口被同主机用户抢 fd
+    读取敏感凭据(fbtoken/launcher 配置含 GitHub 镜像等)。"""
+    dirname = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".",
+                               suffix=".tmp", dir=dirname)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        tmp = None
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 # 插件上传大小上限：防止超大 zip 拖垮服务（P2-2）
 MAX_PLUGIN_UPLOAD_SIZE = 50 * 1024 * 1024
@@ -54,12 +82,16 @@ def audit(action, detail=""):
     log_service.info(f"[{user}@{ip}] {action} {log_service.sanitize_for_log(detail)}", "AUDIT")
 
 def _client_ip():
-    """获取客户端真实 IP:反代场景下取 X-Forwarded-For 最左值,
-    与 routes/auth.py:_client_ip 行为一致,避免所有审计日志记录为反代 IP。"""
-    if current_app.config.get("BEHIND_PROXY"):
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
+    """获取客户端真实 IP。
+
+    始终使用 request.remote_addr：run.py 在 BEHIND_PROXY=1 时已通过 ProxyFix
+    (x_for=1) 修正 remote_addr 为可信反代写入的真实客户端 IP；
+    未启用 ProxyFix 时 remote_addr 为 TCP 对端，不可伪造。
+
+    不要读 access_route[0] 或原始 X-Forwarded-For 头：XFF 链最左侧值由客户端
+    可直接写入，攻击者每次请求换一个伪造值即可绕过审计/限流。
+    与 routes/auth.py:_client_ip 保持一致行为。
+    """
     return request.remote_addr or "?"
 
 def _internal_error(e, action="操作"):
@@ -75,7 +107,14 @@ def _internal_error(e, action="操作"):
 @bp.route("/status")
 def status():
     s = tooldelta_manager.get_status()
-    return jsonify(s)
+    # 仅回传面向前端的状态字段,过滤 manual_stop/shutting_down/starting_after_deps
+    # 等内部守护标志:这些是实现细节,泄露后无业务用途,反而提示攻击者
+    # "面板正在关闭/依赖安装中" 等时机信息便于侧信道利用。
+    return jsonify({
+        "running": s.get("running", False),
+        "pid": s.get("pid"),
+        "buffer_size": s.get("buffer_size", 0),
+    })
 
 @bp.route("/tool/start", methods=["POST"])
 def tool_start():
@@ -366,15 +405,20 @@ def market_connect():
     url = data.get("url", "").rstrip("/")
     if len(url) > 2048:
         return jsonify({"success": False, "error": "URL 过长"})
-    # 复用统一 SSRF 校验，避免与 _is_safe_url 逻辑分叉（P2-8）
-    if not _is_safe_url(url):
-        return jsonify({"success": False, "error": "URL 不合法或不允许访问该地址"})
+    # SSRF 防护:复用 plugin_service.resolve_safe_session 统一入口,
+    # 一次性完成协议/DNS/IP 校验 + IP pinning,避免旧实现仅用 _is_safe_url
+    # 词法校验后直接 requests.get 走二次 DNS 触发 rebinding(攻击者控制权威 DNS
+    # 第一次返回公网 IP 通过校验,第二次返回 169.254.169.254 等内网地址)。
+    # 与 install_network_plugin / connections/test 行为对齐。
+    from app.plugin_service import resolve_safe_session
+    sess, err = resolve_safe_session(url)
+    if sess is None:
+        return jsonify({"success": False, "error": err or "URL 不合法或不允许访问该地址"})
     try:
-        import requests
         # allow_redirects=False：禁止自动跟随 3xx 跳转。
         # _is_safe_url 只校验了原始 host，若放行跳转，恶意市场源可用
         # 302 → http://169.254.169.254/... 把请求导向云元数据等内网资源，绕过 SSRF 拦截（P1-5）
-        r = requests.get(f"{url}/market_tree.json", timeout=10, allow_redirects=False)
+        r = sess.get(f"{url}/market_tree.json", timeout=10, allow_redirects=False)
         if r.is_redirect or r.is_permanent_redirect:
             return jsonify({"success": False, "error": "市场源返回重定向，疑似不安全"})
         r.raise_for_status()
@@ -420,9 +464,14 @@ def market_plugin_detail():
     return jsonify(market_service.get_plugin_data(pid, refresh=True) or {"error": "未找到"})
 
 # ─── 命令扫描 ────────────────────────
+# 命令清单可暴露插件结构(trigger/usage/hint),且命令最终通过 /api/commands/*
+# 执行控制台命令(需 role==10),枚举接口同样要求 role==10 形成纵深防御,
+# 与 routes/commands.py 的注释声明一致,避免普通用户做攻击面侦察。
 
 @bp.route("/commands")
 def list_commands():
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     results = cmd_scanner.scan_all_plugins()
     kw = request.args.get("q", "")[:128].lower()
     plugin_filter = request.args.get("plugin", "")[:64].lower()
@@ -439,6 +488,8 @@ def list_commands():
 
 @bp.route("/commands/plugin")
 def commands_by_plugin():
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     name = request.args.get("name")
     if not name:
         return jsonify({"error": "缺少插件名"})
@@ -449,6 +500,8 @@ def commands_by_plugin():
 
 @bp.route("/commands/stats")
 def commands_stats():
+    if session.get("role") != 10:
+        return jsonify({"error": "无权限"})
     results = cmd_scanner.scan_all_plugins()
     total_cmds = sum(p["count"] for p in results)
     total_plugins = len(results)
@@ -681,8 +734,9 @@ def save_launcher_config():
         if isinstance(v, str) and len(v) > 4096:
             return jsonify({"success": False, "error": f"配置项 {k} 值过长"})
         current[k] = v
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(current, f, ensure_ascii=False, indent=2)
+    # 原子写:避免直接 open("w") 在写入中途崩溃导致配置被截断损坏,
+    # 同时权限收敛 0o600(配置含 GitHub 镜像、市场源等可能敏感的信息)
+    _atomic_write_text(cfg_path, json.dumps(current, ensure_ascii=False, indent=2))
     return jsonify({"success": True})
 
 @bp.route("/fbtoken")
@@ -709,13 +763,10 @@ def save_fbtoken():
         return jsonify({"success": False, "error": "token 过长"})
     td_dir = current_app.config["TOOLDELTA_DIR"]
     token_path = os.path.join(td_dir, "fbtoken")
-    with open(token_path, "w", encoding="utf-8") as f:
-        f.write(token)
-    # 文件权限加固：fbtoken 是 ToolDelta 接入 MC 服务器的高危凭据，
-    # 默认 0o644 同主机其他普通用户可读取。设为 0o600 仅本用户可读写。
-    try:
-        os.chmod(token_path, 0o600)
-    except OSError:
-        pass
+    # 原子写:fbtoken 是 ToolDelta 接入 MC 服务器的高危凭据,
+    # 旧实现 open(path, "w") 创建默认 0o644 文件 + 事后 chmod 之间存在 TOCTOU 窗口,
+    # 同主机低权限用户可在此窗口内打开 fd 持续读取明文 token。
+    # mkstemp 默认 0o600 + os.replace 原子替换,关闭窗口且崩溃不损坏原文件。
+    _atomic_write_text(token_path, token)
     audit("更新 fbtoken")
     return jsonify({"success": True})

@@ -223,15 +223,23 @@ class BackupService:
 
         try:
             _make_snapshot()
-        except ValueError as e:
+        except Exception as e:
             # _make_snapshot 失败时 snapshot_path 可能是部分写入的 zip 残留磁盘，
-            # 必须在此显式清理，否则多次失败累积多个 __pre_restore_*.zip 文件
+            # 必须在此显式清理，否则多次失败累积多个 __pre_restore_*.zip 文件。
+            # 关键:旧实现仅捕获 ValueError(_collect_backup_items 的超限异常),
+            # 但 _make_snapshot 还会因 OSError(权限/磁盘满/IO 错误)等抛出,
+            # 这些异常未被捕获会直接传播到路由层,且 snapshot_path 残留不被清理。
+            # 改为捕获 Exception 统一清理 + 返回通用错误,避免残留与异常泄漏。
             try:
                 if os.path.isfile(snapshot_path):
                     os.remove(snapshot_path)
             except OSError:
                 pass
-            return False, f"当前数据过大，无法创建恢复前快照: {e}"
+            # 区分超限(给用户明确提示)与其他 IO 错误(通用提示避免泄露服务器路径)
+            if isinstance(e, ValueError):
+                return False, f"当前数据过大，无法创建恢复前快照: {e}"
+            log_service.error("创建恢复前快照失败: " + str(e), "BACKUP")
+            return False, "创建恢复前快照失败,请查看日志"
 
         # 用 tempfile.mkdtemp 替代固定目录名 __restore_temp__：
         # 固定名在两个恢复操作并发时会互相覆盖——A 还在解压时 B 的 rmtree 会删掉
@@ -246,7 +254,12 @@ class BackupService:
                 # 防御 zip slip：拒绝绝对路径、..、以及解压后超出 temp 的条目
                 for info in z.infolist():
                     fn = info.filename
-                    if os.path.isabs(fn) or ".." in fn.split("/"):
+                    # 关键:统一把反斜杠归一为正斜杠再 split,与 reset_to_factory 一致。
+                    # 旧实现仅 fn.split("/"),在 Windows 上 zip 条目用反斜杠分隔时
+                    # (如 "..\\..\\evil") split 结果为 ["..\\..\\evil"],不含 ".."
+                    # 元素,绕过校验造成 zip slip 越权写文件。
+                    norm = fn.replace("\\", "/")
+                    if os.path.isabs(fn) or ".." in norm.split("/"):
                         raise ValueError("备份包包含非法路径")
                     dest = os.path.normpath(os.path.join(temp, fn))
                     if dest != temp and not dest.startswith(temp + os.sep):
@@ -293,10 +306,13 @@ class BackupService:
                         shutil.rmtree(dst, ignore_errors=True)
                 with zipfile.ZipFile(snapshot_path, "r") as z:
                     # 回滚解压同样需要 zip slip 防护，避免快照被篡改后越权写文件
+                    # 关键:member 来自 zip 条目名(用户/攻击者可控),拼入异常消息
+                    # 后被 log_service.error 记录。若 member 含 \n 可伪造日志行
+                    # 实现日志注入(嫁祸他人操作/隐藏真实路径)。先 sanitize 再拼入。
                     for member in z.namelist():
                         member_path = os.path.normpath(os.path.join(abs_td_dir, member))
                         if not member_path.startswith(abs_td_dir + os.sep) and member_path != abs_td_dir:
-                            raise ValueError("zip slip detected: " + member)
+                            raise ValueError("zip slip detected: " + log_service.sanitize_for_log(member))
                     z.extractall(abs_td_dir)
                 rollback_ok = True
             except Exception as rollback_ex:
@@ -371,11 +387,13 @@ class BackupService:
                         # 出厂包虽来自可信配置，但 defense-in-depth：若出厂包被替换/篡改，
                         # 无此校验可向任意路径写文件实现 RCE。
                         if os.path.isabs(rel) or ".." in rel.replace("\\", "/").split("/"):
-                            log_service.error("出厂包包含非法路径: " + info.filename, "BACKUP")
+                            # info.filename 来自 zip 条目名(若出厂包被篡改则攻击者可控),
+                            # 直接拼入日志可注入 \n 伪造日志行。先 sanitize。
+                            log_service.error("出厂包包含非法路径: " + log_service.sanitize_for_log(info.filename), "BACKUP")
                             return False, "出厂包包含非法路径,请查看日志"
                         dest = os.path.normpath(os.path.join(td_dir, rel))
                         if dest != abs_td_dir and not dest.startswith(abs_td_dir + os.sep):
-                            log_service.error("出厂包路径越权: " + info.filename, "BACKUP")
+                            log_service.error("出厂包路径越权: " + log_service.sanitize_for_log(info.filename), "BACKUP")
                             return False, "出厂包路径越权,请查看日志"
                         if info.filename.endswith("/"):
                             os.makedirs(dest, exist_ok=True)

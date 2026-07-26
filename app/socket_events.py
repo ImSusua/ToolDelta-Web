@@ -25,15 +25,33 @@ def _session_valid(require_admin=True):
     if require_admin and session.get("role") != 10:
         return False, None
     # session_version 校验:用户被删/改密/重置密码后 session_version 递增,
-    # cookie 中的旧版本号失效,强制断开该长连接
+    # cookie 中的旧版本号失效,强制断开该长连接。
+    # 关键 fail-closed 修复:旧实现仅在 `if ses_user and ses_ver is not None`
+    # 时才校验版本,当 username 缺失或 session_version 缺失时直接跳过校验。
+    # 这意味着伪造的 cookie(authenticated=True, role=10 但无 username/session_version)
+    # 可绕过版本校验,在长连接上持续操控面板。合法会话在登录时必定同时写入
+    # username 与 session_version,缺失任一即视为非法/篡改会话,fail-closed 拒绝。
     ses_user = session.get("username", "")
     ses_ver = session.get("session_version")
-    if ses_user and ses_ver is not None:
+    if require_admin:
+        # 管理员会话必须同时具备 username + session_version,缺一即拒绝
+        if not ses_user or ses_ver is None:
+            session.clear()
+            disconnect()
+            return False, None
         cur_ver = auth_service.get_user_session_version(ses_user)
         if cur_ver is None or cur_ver != ses_ver:
             session.clear()
             disconnect()
             return False, None
+    else:
+        # 非管理员:有 username 则校验版本,无则放行(兼容早期普通用户会话)
+        if ses_user and ses_ver is not None:
+            cur_ver = auth_service.get_user_session_version(ses_user)
+            if cur_ver is None or cur_ver != ses_ver:
+                session.clear()
+                disconnect()
+                return False, None
     return True, None
 
 # 命令发送频率限制：同一客户端 1 秒内最多 10 条，防止刷屏/暴力输入（P2-7）
@@ -82,13 +100,37 @@ def init_socketio(socketio):
         # 函数体末尾会依赖框架隐式行为，未来若追加逻辑可能在已拒绝的连接上误执行）
         if not session.get("authenticated") or session.get("role") != 10:
             return False
-        # session_version 校验:cookie 可能是改密/删用户前的旧值,校验后才允许建连
+        # session_version 校验:cookie 可能是改密/删用户前的旧值,校验后才允许建连。
+        # fail-closed:管理员会话必须同时具备 username + session_version,缺一即拒绝,
+        # 防止伪造的 cookie(authenticated=True, role=10 但无 username/session_version)
+        # 绕过版本校验建连(与 _session_valid 修复同源)。
         ses_user = session.get("username", "")
         ses_ver = session.get("session_version")
-        if ses_user and ses_ver is not None:
-            cur_ver = auth_service.get_user_session_version(ses_user)
-            if cur_ver is None or cur_ver != ses_ver:
-                session.clear()
+        if not ses_user or ses_ver is None:
+            session.clear()
+            return False
+        cur_ver = auth_service.get_user_session_version(ses_user)
+        if cur_ver is None or cur_ver != ses_ver:
+            session.clear()
+            return False
+        # CSWSH(Cross-Site WebSocket Hijacking)防御:浏览器发起跨站 WebSocket
+        # 时会自动携带受害者 cookie,恶意页面可借受害者身份建立连接操控面板。
+        # Flask-SocketIO 的 cors_allowed_origins 已在握手层拦截跨域,但此处
+        # 额外校验 Origin 头作为 defense-in-depth:防止 SOCKETIO_CORS_ALLOWED_ORIGINS
+        # 被误配为 "*" 通配,或框架版本差异导致握手层校验失效。
+        # 浏览器必定发送 Origin 头;无 Origin 视为非浏览器客户端(curl 等),
+        # 会话校验已覆盖鉴权,放行。
+        origin = request.headers.get("Origin")
+        if origin:
+            try:
+                from urllib.parse import urlparse
+                o = urlparse(origin)
+                # 比较 Origin 的 host:port 与当前请求 Host 头(反代下已透传真实 host)
+                # 仅 host+port 比较,scheme 不校验(ws/wss 混用属配置问题,非 Origin 越权)
+                if o.hostname and o.hostname != request.host.split(":")[0]:
+                    return False
+            except Exception:
+                # 解析异常时 fail-closed 拒绝,避免畸形 Origin 绕过校验
                 return False
 
     @socketio.on("console_command")
@@ -178,4 +220,10 @@ def init_socketio(socketio):
         ok, _ = _session_valid(require_admin=True)
         if not ok:
             return
+        # 频率限制:get_status 会解析依赖文件/拼接 log_tail,有 IO+CPU 开销。
+        # 无限流时恶意客户端可每秒发数百次事件造成 CPU 飙升。复用 _check_cmd_rate
+        # 但用独立 key 前缀 "dep_status:",与命令发送速率桶隔离,互不影响。
+        rate_key = "dep_status:" + (request.sid if hasattr(request, "sid") else "anon")
+        if not _check_cmd_rate(rate_key):
+            return None
         return dependency_service.get_status()

@@ -285,6 +285,15 @@ class ToolDeltaManager:
         # 优雅退出保护标志：signal handler 触发后置 True，避免 SIGTERM/SIGINT
         # 重复递交或与 atexit 叠加导致 stop() 被多次调用。
         self._shutting_down = False
+        # 用户显式停止标志：stop() 由 API 触发时置 True，watchdog 据此跳过
+        # 自动重启（仅守护崩溃，不守护用户主动停止）。start()/restart() 复位。
+        # 关键:若无此标志,用户在面板点"停止"后,watchdog 下一周期立即拉起进程,
+        # 用户的停止意图被无视,且无人值守场景下子进程反复启停造成资源浪费。
+        self._manual_stop = False
+        # 依赖安装中后台启动标志:start() 因依赖未就绪派生 _start_after_deps
+        # 线程时置 True,线程退出时复位。watchdog 据此跳过重复触发 start(),
+        # 避免每个检查周期都派生一个 _start_after_deps 线程堆积成线程风暴。
+        self._starting_after_deps = False
 
     def init_app(self, app):
         self.app = app
@@ -425,6 +434,14 @@ class ToolDeltaManager:
             if self._shutting_down:
                 self._broadcast("system", "正在关闭，无法启动")
                 return False
+            # 用户显式 start 视为放弃之前的 manual_stop 意图,复位标志,
+            # 后续崩溃才允许 watchdog 自动重启。
+            self._manual_stop = False
+            # _starting_after_deps 防重入:依赖安装中已有后台线程在等待拉起,
+            # 此刻再调 start() 只会派生第二个 _start_after_deps 线程,两者都会
+            # 调 _spawn 造成双重启动。返回 True 让调用方认为已受理。
+            if self._starting_after_deps:
+                return True
             if not getattr(self, "app", None):
                 self._broadcast("system", "应用上下文未初始化，无法启动")
                 return False
@@ -447,6 +464,7 @@ class ToolDeltaManager:
             # 依赖未就绪：后台线程等待安装完成后自动拉起，避免请求线程被长耗时安装阻塞
             # （全新 Linux 环境装 17 个包含 grpcio 可能耗时数十秒~数分钟）
             self._broadcast("system", "依赖安装进行中，请稍候，完成后将自动启动 ToolDelta…")
+            self._starting_after_deps = True
             threading.Thread(target=self._start_after_deps, daemon=True).start()
             return True
 
@@ -464,6 +482,9 @@ class ToolDeltaManager:
             with self._lock:
                 if self.running:
                     return
+                # 关闭 _starting_after_deps 标志,允许后续 start() 重新派生线程。
+                # 放在 _spawn 前:若 _spawn 抛异常,标志也需复位避免永久卡死。
+                self._starting_after_deps = False
                 self._spawn()
         except Exception as e:
             try:
@@ -475,6 +496,10 @@ class ToolDeltaManager:
                 self._broadcast("system", "后台启动失败: " + str(e))
             except Exception:
                 pass
+        finally:
+            # 兜底复位:无论正常返回还是异常,都确保标志复位,避免永久卡死
+            with self._lock:
+                self._starting_after_deps = False
 
     def _spawn(self):
         """真正拉起 ToolDelta 子进程（依赖已就绪的前提下）。
@@ -497,7 +522,21 @@ class ToolDeltaManager:
             if os.name == "nt":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            env = os.environ.copy()
+            # 环境变量白名单:ToolDelta 插件为第三方代码,可读 os.environ 窃取
+            # SECRET_KEY(若通过 env 设置)、数据库密码、云凭据等。仅传必需子集,
+            # 其余从父进程过滤。保留 PATH/HOME/USER 等运行时必需项,显式剔除
+            # SECRET_KEY/BEHIND_PROXY 等面板内部配置。
+            _ENV_WHITELIST = (
+                "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+                "TMPDIR", "TEMP", "TMP", "PYENV_ROOT", "PYTHONPATH", "PYTHONHOME",
+                "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+                "SYSTEMROOT", "WINDIR", "APPDATA",  # Windows Python 运行时必需
+            )
+            env = {k: v for k, v in os.environ.items()
+                   if k in _ENV_WHITELIST and k not in
+                   ("SECRET_KEY", "BEHIND_PROXY", "ALLOW_UNSAFE_WERKZEUG",
+                    "SESSION_COOKIE_SECURE", "SESSION_COOKIE_SAMESITE",
+                    "CSP_CONNECT_SRC", "ENABLE_HSTS")}
             env["PYTHONIOENCODING"] = "utf-8"
             # 真彩环境：确保子进程(rich/colorama)尽量输出 24-bit ANSI 真彩色（P2-6）
             env["COLORTERM"] = "truecolor"
@@ -522,6 +561,10 @@ class ToolDeltaManager:
                 master, slave = pty.openpty()
                 self.pty_master = master
                 try:
+                    # start_new_session=True 让子进程成为新进程组 leader,
+                    # stop() 中 os.killpg 可一次性终止子进程及其派生的孙进程
+                    # (ToolDelta 插件常 fork 子进程如 WebSocket 客户端),
+                    # 避免 proc.terminate() 只杀直接子进程留下孤儿孙进程持续占用资源
                     self.process = subprocess.Popen(
                         [python_bin, main_py],
                         cwd=td_dir,
@@ -531,6 +574,7 @@ class ToolDeltaManager:
                         startupinfo=startupinfo,
                         bufsize=0,
                         env=env,
+                        start_new_session=True,
                     )
                 except Exception:
                     # Popen 失败时清理已打开的 pty fd,避免累积 fd 泄漏
@@ -543,6 +587,12 @@ class ToolDeltaManager:
                 # Windows 无 pty 模块, 回退 PIPE。自适配策略：Unix 用真实伪终端让子进程
                 # 检测到 TTY 而输出 ANSI；Windows 无 pty，改为用 FORCE_COLOR/CLICOLOR_FORCE
                 # 环境强制子进程在管道下仍输出 ANSI 真彩转义，Web 端再转成彩色 HTML。
+                # Windows 不支持 start_new_session/killpg,依赖 CREATE_NEW_PROCESS_GROUP
+                creationflags = 0
+                try:
+                    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+                except AttributeError:
+                    pass
                 self.process = subprocess.Popen(
                     [python_bin, main_py],
                     cwd=td_dir,
@@ -552,6 +602,7 @@ class ToolDeltaManager:
                     startupinfo=startupinfo,
                     bufsize=0,
                     env=env,
+                    creationflags=creationflags,
                 )
             self.running = True
             self._broadcast("system", "ToolDelta 进程已启动")
@@ -574,19 +625,48 @@ class ToolDeltaManager:
         pty = None
         with self._lock:
             if not self.running or not self.process:
+                # 即使进程已退出,也标记 manual_stop:用户显式 stop 意在
+                # 让进程保持停止状态,watchdog 不应在下一周期拉起。
+                self._manual_stop = True
                 return True
             proc = self.process
             self.running = False
             self.process = None
             pty = self.pty_master
+            # 标记用户显式停止:watchdog 据此跳过自动重启。
+            # 注意:_signal_shutdown 触发的 stop() 也会走到这里,但 _shutting_down
+            # 已置 True,watchdog 会优先用 _shutting_down 判断跳过重启。
+            self._manual_stop = True
         # 在锁外等待进程退出，避免持锁阻塞其他调用（如 send_command）最长 5 秒（P2-4）
         try:
             try:
-                proc.terminate()
+                # 优先用进程组信号终止:子进程以 start_new_session=True 启动,
+                # 成为新进程组 leader。os.killpg 一次性向整个进程组发送 SIGTERM,
+                # 可终止子进程及其派生的孙进程(ToolDelta 插件常 fork 子进程如
+                # WebSocket 客户端),避免 proc.terminate() 只杀直接子进程留下孤儿。
+                # 失败回退(Windows 不支持 killpg,或子进程已退出)走 proc.terminate。
+                killed_pgroup = False
+                if os.name != "nt":
+                    try:
+                        pgid = os.getpgid(proc.pid)
+                        os.killpg(pgid, signal.SIGTERM)
+                        killed_pgroup = True
+                    except (ProcessLookupError, OSError):
+                        pass
+                if not killed_pgroup:
+                    proc.terminate()
                 proc.wait(timeout=5)
             except Exception:
                 try:
-                    proc.kill()
+                    # 强制终止:再次尝试 killpg(整个进程组) → kill(直接子进程)
+                    if os.name != "nt":
+                        try:
+                            pgid = os.getpgid(proc.pid)
+                            os.killpg(pgid, signal.SIGKILL)
+                        except (ProcessLookupError, OSError):
+                            proc.kill()
+                    else:
+                        proc.kill()
                     # 显式 wait 回收僵尸进程,避免 PID/资源不释放
                     try:
                         proc.wait(timeout=5)
@@ -804,6 +884,15 @@ class ToolDeltaManager:
                 "running": self.running and alive,
                 "pid": self.process.pid if self.process else None,
                 "buffer_size": len(self.output_buffer),
+                # 暴露内部守护状态供 watchdog 决策是否自动重启:
+                # - manual_stop: 用户显式停止,不重启
+                # - shutting_down: 信号触发的优雅退出,不重启
+                # - starting_after_deps: 依赖安装中后台启动进行中,不重复触发 start
+                # 这些字段不向 /api/tool/status 之外暴露(仅 watchdog 内部消费),
+                # 避免向用户态泄露进程管理实现细节。
+                "manual_stop": self._manual_stop,
+                "shutting_down": self._shutting_down,
+                "starting_after_deps": self._starting_after_deps,
             }
 
     def get_output(self, tail=200, as_html=False):

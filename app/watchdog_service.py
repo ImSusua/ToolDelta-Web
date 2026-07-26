@@ -284,6 +284,25 @@ class WatchdogService:
                     self._runtime["restarts_count"] = 0
             return
 
+        # 进程未运行,但需先判断是否处于"不应重启"的状态:
+        # 1) manual_stop: 用户通过 API 显式 stop(),意图保持停止,watchdog 不得重启
+        # 2) shutting_down: SIGTERM/SIGINT 触发的优雅退出,重启会与退出意图冲突
+        # 3) starting_after_deps: 依赖安装中后台线程已在拉起进程,重复调 start()
+        #    会派生第二个 _start_after_deps 线程造成双重启动
+        # 旧实现无这些检查:用户在面板点"停止"后,watchdog 下一周期立即拉起进程,
+        # 用户的停止意图被无视;容器 SIGTERM 退出时 watchdog 还在尝试重启造成
+        # 退出延迟;依赖安装期间每个检查周期都派生一个 _start_after_deps 线程堆积。
+        if status.get("manual_stop") or status.get("shutting_down"):
+            with self._lock:
+                self._runtime["healthy"] = True
+                self._runtime["last_event"] = "进程已停止(用户/关闭意图),跳过自动重启"
+            return
+        if status.get("starting_after_deps"):
+            with self._lock:
+                self._runtime["healthy"] = True
+                self._runtime["last_event"] = "依赖安装中后台启动进行中,跳过自动重启"
+            return
+
         # 进程未运行
         with self._lock:
             auto_restart = self._config.get("auto_restart", True)

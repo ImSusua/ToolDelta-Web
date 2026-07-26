@@ -8,7 +8,15 @@ from config import Config
 
 bp = Blueprint("files", __name__, url_prefix="/api/files")
 
-ALLOWED_ROOT = os.path.normpath(Config.TOOLDELTA_DIR)
+# 关键:用 realpath 而非 normpath 解析 ALLOWED_ROOT。
+# 若 TOOLDELTA_DIR 自身是符号链接(如 /var/www/ToolDelta -> /opt/td),
+# normpath 保留符号链接路径,而 _is_real_path 用 os.path.realpath() 解析。
+# 此时 _is_real_path(ALLOWED_ROOT) 会因 real != ALLOWED_ROOT 返回 False,
+# 导致所有文件操作误报"路径包含越权符号链接"而无法使用。
+# realpath 一次性解析符号链接,使 ALLOWED_ROOT 与 _is_real_path 的 realpath
+# 解析结果一致,消除误报;同时也收紧校验:所有路径比较都在真实路径空间进行,
+# 避免通过符号链接路径绕过前缀校验访问 ALLOWED_ROOT 兄弟目录。
+ALLOWED_ROOT = os.path.realpath(Config.TOOLDELTA_DIR)
 
 # 资源防护上限：防止目录打包/搜索耗尽内存或磁盘（P2-2）
 MAX_SEARCH_DEPTH = 10           # 文件搜索最大递归深度
@@ -196,8 +204,25 @@ def save_file():
     if len(content) > 10 * 1024 * 1024:
         return fail("文件内容超过 10MB 上限")
     try:
-        with open(full, "w", encoding="utf-8") as f:
-            f.write(content)
+        # 原子写:临时文件 + os.replace,避免直接 open(full, "w") 在写入中途崩溃
+        # 导致原文件被截断损坏。ToolDelta 配置文件(如 ToolDelta基本配置.json)
+        # 被截断后会导致主程序启动失败,用户不得不手动恢复。
+        import tempfile
+        dirname = os.path.dirname(full) or "."
+        fd, tmp = tempfile.mkstemp(prefix=".save_", suffix=".tmp", dir=dirname)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, full)
+            tmp = None
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
         audit("保存文件", f"路径={raw}")
         return ok()
     except Exception as e:
@@ -535,5 +560,10 @@ def batch_delete():
                 pass
             errors.append(f"{raw}: 删除失败，请查看日志")
     if deleted:
-        audit("批量删除", str(deleted))
+        # 审计日志中对每个路径单独 sanitize:raw 来自用户输入,可能含控制字符(\n/\t),
+        # 虽然 Python str(list) 的 repr 会转义,但直接拼接 str(deleted) 仍可能在
+        # 某些日志后端(如把 repr 字符串原样写入文件)造成可读性问题或注入。
+        # 逐条 sanitize 后 join,确保每条路径都经过控制字符过滤。
+        safe_deleted = ", ".join(log_service.sanitize_for_log(p) for p in deleted)
+        audit("批量删除", safe_deleted)
     return ok({"deleted": deleted, "errors": errors})
