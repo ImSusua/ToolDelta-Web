@@ -6,6 +6,7 @@ window.TD_PALETTE = (function () {
     var isOpen = false;
     var selectedIdx = 0;
     var listEl = null, inputEl = null, overlayEl = null;
+    var _composing = false;
     // 命令历史：记录最近 5 个执行过的命令，置顶展示
     var _CMD_HISTORY = [];
     var _CMD_HISTORY_KEY = 'td_cmd_history';
@@ -116,7 +117,7 @@ window.TD_PALETTE = (function () {
             id: 'act_focus_search', label: '聚焦页面搜索框', group: '动作', ico: '🔍', hint: '',
             keywords: '搜索 search focus find',
             run: function () {
-                var s = document.querySelector('input[type=text][id*=Search], input[type=text][id*=search], #pluginSearch, #searchInput, #presetSearch, #marketSearch, #commandSearch');
+                var s = document.querySelector('input[type=text][id*=Search], input[type=text][id*=search], #pluginSearch, #searchInput, #presetSearch, #marketSearch, #commandSearch, #logFilter');
                 if (s) { s.focus(); s.select(); }
             }
         });
@@ -152,37 +153,34 @@ window.TD_PALETTE = (function () {
         var recent = _recentCommands();
         var actions = _actionCommands();
         var navs = _navCommands();
-        // 拼装：最近执行 → 最近访问 → 动作 → 导航 → 自定义
-        return history.concat(recent).concat(actions).concat(navs).concat(registry);
+        var combined = history.concat(recent).concat(actions).concat(navs).concat(registry);
+        var seen = {};
+        var result = [];
+        for (var i = 0; i < combined.length; i++) {
+            var cmd = combined[i];
+            var baseId = cmd.id.replace(/^(history|recent)_/, '');
+            if (!seen[baseId]) {
+                seen[baseId] = true;
+                result.push(cmd);
+            }
+        }
+        return result;
     }
 
-    // 模糊子序列匹配：输入 "tgldk" 命中 "ToolDelta"
-    function _fuzzy(q, text) {
-        q = (q || '').toLowerCase();
-        text = (text || '').toLowerCase();
-        if (!q) return true;
-        var i = 0;
-        for (var j = 0; j < text.length; j++) {
-            if (text.charAt(j) === q.charAt(i)) i++;
-            if (i >= q.length) return true;
-        }
-        return false;
-    }
     // 打分函数：前缀匹配 > 包含匹配 > 子序列匹配（连续匹配加分）
     function _score(q, text) {
         q = (q || '').toLowerCase();
         text = (text || '').toLowerCase();
         if (!q) return 0;
-        if (text.indexOf(q) === 0) return 100; // 前缀匹配最高
-        if (text.indexOf(q) !== -1) return 60;  // 包含匹配
-        // 子序列匹配打分
+        if (text.indexOf(q) === 0) return 100;
+        if (text.indexOf(q) !== -1) return 60;
         var score = 0, qi = 0, consecutive = 0, firstMatch = true;
         for (var j = 0; j < text.length && qi < q.length; j++) {
             if (text.charAt(j) === q.charAt(qi)) {
                 score += 10;
-                if (consecutive > 0) score += 5 * consecutive; // 连续匹配加分
+                if (consecutive > 0) score += 5 * consecutive;
                 consecutive++;
-                if (firstMatch && j === 0) score += 15; // 首字符匹配加分
+                if (firstMatch && j === 0) score += 15;
                 qi++;
             } else {
                 consecutive = 0;
@@ -192,22 +190,36 @@ window.TD_PALETTE = (function () {
         return qi === q.length ? score : -1;
     }
 
-    // 高亮匹配字符
+    // 高亮匹配字符（优先连续匹配，然后子序列匹配）
     function _highlight(text, q) {
         if (!q) return text;
         var esc = window._escHtml || String;
         var lo = text.toLowerCase();
         var ql = q.toLowerCase();
-        var out = '';
+        var directIdx = lo.indexOf(ql);
+        if (directIdx !== -1) {
+            return esc(text.substring(0, directIdx)) +
+                '<mark>' + esc(text.substring(directIdx, directIdx + ql.length)) + '</mark>' +
+                esc(text.substring(directIdx + ql.length));
+        }
+        var matchSet = {};
         var qi = 0;
-        for (var i = 0; i < text.length; i++) {
-            if (qi < ql.length && lo.charAt(i) === ql.charAt(qi)) {
-                out += '<mark>' + esc(text.charAt(i)) + '</mark>';
+        for (var i = 0; i < text.length && qi < ql.length; i++) {
+            if (lo.charAt(i) === ql.charAt(qi)) {
+                matchSet[i] = true;
                 qi++;
-            } else {
-                out += esc(text.charAt(i));
             }
         }
+        if (qi < ql.length) return esc(text);
+        var out = '';
+        var inMark = false;
+        for (var k = 0; k < text.length; k++) {
+            var isMatch = matchSet[k];
+            if (isMatch && !inMark) { out += '<mark>'; inMark = true; }
+            else if (!isMatch && inMark) { out += '</mark>'; inMark = false; }
+            out += esc(text.charAt(k));
+        }
+        if (inMark) out += '</mark>';
         return out;
     }
 
@@ -345,6 +357,9 @@ window.TD_PALETTE = (function () {
             inputEl.setAttribute('aria-expanded', 'true');
             inputEl.setAttribute('aria-controls', 'paletteList');
             inputEl.setAttribute('aria-autocomplete', 'list');
+            // 中文输入法组合状态
+            inputEl.addEventListener('compositionstart', function () { _composing = true; });
+            inputEl.addEventListener('compositionend', function () { _composing = false; });
             // 输入防抖 50ms，避免快速输入时频繁重渲染
             var _inputTimer = null;
             inputEl.addEventListener('input', function () {
@@ -357,6 +372,7 @@ window.TD_PALETTE = (function () {
             // 只阻止会触发全局快捷键的字符冒泡（g/Slash/?），允许方向键/Enter/Home/End
             // 冒泡到 _onKeydown 处理器；之前的代码无脑 stopPropagation 导致键盘导航完全失效
             inputEl.addEventListener('keydown', function (e) {
+                if (_composing) return;
                 // 修饰键组合（Cmd+K、Ctrl+K）一律放行
                 if (e.metaKey || e.ctrlKey || e.altKey) return;
                 // 导航键全部放行，由 _onKeydown 处理
@@ -397,7 +413,18 @@ window.TD_PALETTE = (function () {
         }
     }
 
+    function _getPageStep() {
+        if (!listEl) return 5;
+        var items = listEl.querySelectorAll('.palette-item');
+        if (!items.length) return 5;
+        var listH = listEl.clientHeight;
+        var itemH = items[0].offsetHeight || 36;
+        var visible = Math.max(1, Math.floor(listH / itemH) - 1);
+        return Math.max(3, visible);
+    }
+
     function _onKeydown(e) {
+        if (_composing) return;
         if (!isOpen) {
             // Cmd/Ctrl+K 打开
             if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K' || e.keyCode === 75)) {
@@ -432,12 +459,14 @@ window.TD_PALETTE = (function () {
         }
         if (e.key === 'PageUp') {
             e.preventDefault();
-            _setSelected(Math.max(0, selectedIdx - 5)); return;
+            var step = _getPageStep();
+            _setSelected(Math.max(0, selectedIdx - step)); return;
         }
         if (e.key === 'PageDown') {
             e.preventDefault();
+            var pdStep = _getPageStep();
             var pdRes = (listEl && listEl._results) || [];
-            _setSelected(Math.min(pdRes.length - 1, selectedIdx + 5)); return;
+            _setSelected(Math.min(pdRes.length - 1, selectedIdx + pdStep)); return;
         }
         if (e.key === 'Enter' || e.keyCode === 13) {
             e.preventDefault();

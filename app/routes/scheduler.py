@@ -37,7 +37,7 @@ def _audit(action, detail):
     区分"合法管理员操作"与"攻击者破坏",事后无法取证。
     detail 中可能含用户输入(job name/command),先 sanitize 防日志注入。
     """
-    user = session.get("username", "?")
+    user = log_service.sanitize_for_log(session.get("username", "?"))
     try:
         log_service.info(
             f"[{user}] {action}: {log_service.sanitize_for_log(detail)}",

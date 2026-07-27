@@ -138,6 +138,7 @@ class SchedulerService:
             "interval": job.get("interval"),
             "hour": job.get("hour"),
             "minute": job.get("minute"),
+            "cron": job.get("cron"),
             "command": job.get("command", ""),
             "enabled": bool(job.get("enabled", False)),
             "last_run": job.get("last_run"),
@@ -171,8 +172,8 @@ class SchedulerService:
         # 与 tooldelta_manager.MAX_COMMAND_LEN=8192 对齐，防止超大命令撑爆持久化文件
         if len(str(command)) > 8192:
             raise ValueError("命令长度不能超过 8192 字符")
-        if type_ not in ("interval", "daily"):
-            raise ValueError("任务类型不合法（应为 interval 或 daily）")
+        if type_ not in ("interval", "daily", "cron"):
+            raise ValueError("任务类型不合法（应为 interval / daily / cron）")
 
         job = dict(base) if base else {}
         job["name"] = str(name).strip()
@@ -187,13 +188,13 @@ class SchedulerService:
                 raise ValueError("间隔秒数（interval）必须是整数")
             if interval < 1:
                 raise ValueError("间隔秒数（interval）必须 >= 1")
-            # 上界：防止 interval=10**18 让 next_run 计算溢出，且无意义（1 年以上）
             if interval > 86400 * 365:
                 raise ValueError("间隔秒数不能超过 1 年（31536000 秒）")
             job["interval"] = interval
             job["hour"] = None
             job["minute"] = None
-        else:  # daily
+            job["cron"] = None
+        elif type_ == "daily":
             hour = payload.get("hour") if base is None else payload.get("hour", base.get("hour"))
             minute = payload.get("minute") if base is None else payload.get("minute", base.get("minute"))
             if hour is None or minute is None:
@@ -210,6 +211,17 @@ class SchedulerService:
             job["hour"] = hour
             job["minute"] = minute
             job["interval"] = None
+            job["cron"] = None
+        else:  # cron
+            cron_expr = payload.get("cron") if base is None else payload.get("cron", base.get("cron"))
+            if not cron_expr or not str(cron_expr).strip():
+                raise ValueError("cron 表达式不能为空")
+            cron_str = str(cron_expr).strip()
+            SchedulerService._validate_cron(cron_str)
+            job["cron"] = cron_str
+            job["interval"] = None
+            job["hour"] = None
+            job["minute"] = None
 
         if "enabled" in payload:
             job["enabled"] = bool(payload["enabled"])
@@ -218,6 +230,78 @@ class SchedulerService:
             job["enabled"] = False
 
         return job
+
+    @staticmethod
+    def _parse_cron_field(field, min_val, max_val):
+        """解析单个 cron 字段，返回允许值的 set。支持 * , - /"""
+        result = set()
+        for part in field.split(","):
+            part = part.strip()
+            if not part:
+                raise ValueError("cron 字段格式错误")
+            step = 1
+            if "/" in part:
+                part, step_str = part.split("/", 1)
+                try:
+                    step = int(step_str)
+                except (TypeError, ValueError):
+                    raise ValueError("cron 步长必须是整数")
+                if step < 1:
+                    raise ValueError("cron 步长必须 >= 1")
+            if part == "*":
+                start, end = min_val, max_val
+            elif "-" in part:
+                try:
+                    start_str, end_str = part.split("-", 1)
+                    start = int(start_str)
+                    end = int(end_str)
+                except (TypeError, ValueError):
+                    raise ValueError("cron 范围格式错误")
+            else:
+                try:
+                    start = int(part)
+                    end = start
+                except (TypeError, ValueError):
+                    raise ValueError("cron 值必须是整数")
+            if start < min_val or end > max_val or start > end:
+                raise ValueError(f"cron 值超出范围 ({min_val}-{max_val})")
+            for v in range(start, end + 1, step):
+                result.add(v)
+        return result
+
+    @staticmethod
+    def _validate_cron(expr):
+        """验证 5 字段 cron 表达式：分 时 日 月 周"""
+        parts = expr.split()
+        if len(parts) != 5:
+            raise ValueError("cron 表达式必须包含 5 个字段（分 时 日 月 周）")
+        try:
+            SchedulerService._parse_cron_field(parts[0], 0, 59)
+            SchedulerService._parse_cron_field(parts[1], 0, 23)
+            SchedulerService._parse_cron_field(parts[2], 1, 31)
+            SchedulerService._parse_cron_field(parts[3], 1, 12)
+            SchedulerService._parse_cron_field(parts[4], 0, 6)
+        except ValueError as e:
+            raise ValueError(f"cron 表达式错误: {e}")
+
+    @staticmethod
+    def _cron_matches(dt, minute_set, hour_set, dom_set, month_set, dow_set,
+                       dom_is_star=True, dow_is_star=True):
+        """检查 datetime 是否匹配 cron 字段集合。
+        标准cron语义：当 day-of-month 和 day-of-week 都非*时取并集(OR)。
+        """
+        if dom_is_star and dow_is_star:
+            day_match = True
+        elif dom_is_star:
+            day_match = (dt.weekday() + 1) % 7 in dow_set
+        elif dow_is_star:
+            day_match = dt.day in dom_set
+        else:
+            day_match = (dt.day in dom_set) or ((dt.weekday() + 1) % 7 in dow_set)
+        return (dt.minute in minute_set and
+                dt.hour in hour_set and
+                day_match and
+                dt.month in month_set)
 
     @staticmethod
     def _compute_next_run(job, now):
@@ -234,6 +318,28 @@ class SchedulerService:
                 if cand <= now:
                     cand = cand + timedelta(days=1)
                 return cand.strftime(_FMT)
+            if job.get("type") == "cron":
+                cron_str = job.get("cron", "")
+                parts = cron_str.split()
+                if len(parts) != 5:
+                    return None
+                minute_set = SchedulerService._parse_cron_field(parts[0], 0, 59)
+                hour_set = SchedulerService._parse_cron_field(parts[1], 0, 23)
+                dom_set = SchedulerService._parse_cron_field(parts[2], 1, 31)
+                month_set = SchedulerService._parse_cron_field(parts[3], 1, 12)
+                dow_set = SchedulerService._parse_cron_field(parts[4], 0, 6)
+                _dom_star = parts[2].strip() == "*"
+                _dow_star = parts[4].strip() == "*"
+                cand = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                for _ in range(366 * 24 * 60):
+                    try:
+                        if SchedulerService._cron_matches(cand, minute_set, hour_set, dom_set, month_set, dow_set,
+                                                          _dom_star, _dow_star):
+                            return cand.strftime(_FMT)
+                    except Exception:
+                        pass
+                    cand = cand + timedelta(minutes=1)
+                return None
         except Exception:
             return None
         return None
@@ -346,7 +452,6 @@ class SchedulerService:
 
     def _tick(self):
         now = datetime.now()
-        # 拷贝一份快照迭代，避免迭代期间被修改
         with self._lock:
             jobs = list(self._jobs)
         for job in jobs:
@@ -362,8 +467,26 @@ class SchedulerService:
                     if (now.hour == int(job.get("hour", -1))
                             and now.minute == int(job.get("minute", -1))
                             and (job.get("last_run") is None
-                                 or parse(job.get("last_run")).date() != now.date())):
+                                 or parse(job.get("last_run")).date() != now.date()
+                                 or (now - parse(job.get("last_run"))).total_seconds() >= 60)):
                         should = True
+                elif job.get("type") == "cron":
+                    cron_str = job.get("cron", "")
+                    parts = cron_str.split()
+                    if len(parts) == 5:
+                        minute_set = self._parse_cron_field(parts[0], 0, 59)
+                        hour_set = self._parse_cron_field(parts[1], 0, 23)
+                        dom_set = self._parse_cron_field(parts[2], 1, 31)
+                        month_set = self._parse_cron_field(parts[3], 1, 12)
+                        dow_set = self._parse_cron_field(parts[4], 0, 6)
+                        _dom_star = parts[2].strip() == "*"
+                        _dow_star = parts[4].strip() == "*"
+                        if self._cron_matches(now.replace(second=0, microsecond=0),
+                                              minute_set, hour_set, dom_set, month_set, dow_set,
+                                              _dom_star, _dow_star):
+                            lst = job.get("last_run")
+                            if lst is None or (now - parse(lst)).total_seconds() >= 60:
+                                should = True
             except Exception:
                 should = False
             if should:

@@ -231,6 +231,11 @@ class WatchdogService:
             self._config["enabled"] = False
             self._write_config_locked()
 
+    def check_now(self):
+        """立即触发一次检查（不等待定时循环），供前端「立即检查」按钮调用。"""
+        self._check()
+        return True
+
     def get_runtime(self):
         # 合并 config.enabled 与运行时字段；monitor_running 动态计算
         with self._lock:
@@ -351,6 +356,15 @@ class WatchdogService:
                     self._runtime["last_event"] = "依赖安装进行中,等待启动完成"
                 try:
                     log_service.info(self._runtime["last_event"], "WATCHDOG")
+                except Exception:
+                    pass
+            else:
+                # start() 返回 False：启动失败，更新状态为不健康
+                with self._lock:
+                    self._runtime["healthy"] = False
+                    self._runtime["last_event"] = "于 %s 自动重启 ToolDelta 失败" % now
+                try:
+                    log_service.error(self._runtime["last_event"], "WATCHDOG")
                 except Exception:
                     pass
         else:

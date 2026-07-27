@@ -92,6 +92,21 @@
           if (main && window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
               main.setAttribute('aria-hidden', open ? 'true' : 'false');
           }
+          // 侧边栏打开时禁用主内容滚动（防止滚动穿透）
+          if (open && window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+              document.body._scrollY = window.scrollY;
+              document.body.style.overflow = 'hidden';
+              document.body.style.position = 'fixed';
+              document.body.style.top = '-' + document.body._scrollY + 'px';
+              document.body.style.width = '100%';
+          } else {
+              var scrollY = document.body._scrollY || 0;
+              document.body.style.overflow = '';
+              document.body.style.position = '';
+              document.body.style.top = '';
+              document.body.style.width = '';
+              window.scrollTo(0, scrollY);
+          }
       }
 
       /* ── Android 软键盘适配：visualViewport 监听 ──

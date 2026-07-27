@@ -379,6 +379,14 @@ class PluginService:
             fd, tmp = tempfile.mkstemp(prefix=f".{fname}.", dir=data_dir)
             with os.fdopen(fd, "wb") as f:
                 file.save(f)
+            # 先校验临时文件大小，通过后才替换旧文件（避免旧数据丢失）
+            if os.path.getsize(tmp) > self.MAX_PLUGIN_ZIP_SIZE:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                tmp = None
+                return False
             os.replace(tmp, path)
             tmp = None
         finally:
@@ -433,6 +441,14 @@ class PluginService:
             fd, tmp = tempfile.mkstemp(prefix=f".{fname}.", dir=cfg_dir)
             with os.fdopen(fd, "wb") as f:
                 file.save(f)
+            # 先校验临时文件大小，通过后才替换旧文件（避免旧配置丢失）
+            if os.path.getsize(tmp) > self.MAX_PLUGIN_ZIP_SIZE:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                tmp = None
+                return False
             os.replace(tmp, path)
             tmp = None
         finally:
@@ -544,7 +560,7 @@ class PluginService:
             # 临时暂存目录:创建在 pdir 下(同文件系统,os.replace/shutil.move 才能原子)
             staging = tempfile.mkdtemp(prefix="__net_install_", dir=pdir)
             files_to_download = []
-            self._unfold_dict(ftree, plugin_name, files_to_download)
+            self._unfold_dict(ftree, "", files_to_download)
             # 网络插件包整体上限：防止文件数/总大小异常拖垮磁盘（P2-2）
             MAX_FILE_SIZE = 10 * 1024 * 1024
             MAX_TOTAL_SIZE = 100 * 1024 * 1024

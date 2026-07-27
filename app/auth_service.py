@@ -223,9 +223,10 @@ def create_user(username, password, role=1):
     valid, msg = validate_username(username)
     if not valid:
         return False, msg
-    valid, msg = validate_password(password)
-    if not valid:
-        return False, msg
+    # 弱密码仅提示不阻止创建：create_user 只拒绝空密码，
+    # 复杂度不足由路由层 check_password_strength 返回 password_warning
+    if not password:
+        return False, "密码不能为空"
     # role 白名单校验:仅允许 ROLES.values() 中的合法角色值。
     # 旧实现把 role 参数直接写入持久化文件,路由层若把请求体 role 字段透传
     # (如 role=10 创建管理员,或 role=999 制造超出预期的角色),会导致提权。

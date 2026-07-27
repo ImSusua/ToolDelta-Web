@@ -1,18 +1,15 @@
 // 服务器连接配置前端逻辑
 
-// 连接列表缓存：避免编辑时再次拉取全列表
 var _connCache = [];
-
-// 统一转义：优先使用 main.js 的 _escHtml，并补充反斜杠与正斜杠转义
-function escapeHtml(s) {
-    return (window._escHtml || function (x) {
-        return String(x == null ? '' : x).replace(/[&<>"'\/\\]/g, function (m) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#47;', '\\': '&#92;' }[m];
+// 惰性查找：脚本加载时 main.js 可能尚未执行，_escHtml 为 undefined
+function _esc(s) {
+    return (window._escHtml || function(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function(m) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
         });
     })(s);
 }
 
-// 渲染连接列表（基于 _connCache），供加载与本地撤销复用
 function renderList() {
     var tbody = document.getElementById('connTableBody');
     var empty = document.getElementById('connEmpty');
@@ -23,36 +20,36 @@ function renderList() {
         return;
     }
     if (empty) empty.style.display = 'none';
-    // 安全：使用 data-* 属性承载 id（data-attr 经过 HTML 实体编码），事件委托派发
-    // 避免 onclick="fn('...')" 字符串拼接导致的属性上下文注入（XSS）
     tbody.innerHTML = _connCache.map(function (c) {
         var addr = (c.host || '') + ':' + (c.port != null ? c.port : '');
+        var nameEsc = _esc(c.name || '');
+        var statusDot = c.is_default
+            ? '<span class="status-dot running" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 0 2px rgba(39,166,68,0.2);margin-right:6px;flex-shrink:0"></span><span style="color:var(--success);font-weight:500">默认</span>'
+            : '<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ink-tertiary);margin-right:6px;flex-shrink:0"></span><span style="color:var(--ink-subtle)">就绪</span>';
         var def = c.is_default
             ? '<span class="badge-default">默认</span>'
             : '<span class="badge-normal">—</span>';
-        var nameEsc = escapeHtml(c.name || '');
         var defaultBtn;
         if (c.is_default) {
             defaultBtn = '<button class="btn btn-sm btn-outline" disabled aria-disabled="true">默认</button>';
         } else {
-            defaultBtn = '<button class="btn btn-sm btn-outline" data-action="default" data-id="' + escapeHtml(c.id || '') + '" aria-label="设为连接 ' + nameEsc + ' 为默认">设为默认</button>';
+            defaultBtn = '<button class="btn btn-sm btn-outline" data-action="default" data-id="' + _esc(c.id || '') + '" aria-label="设为连接 ' + nameEsc + ' 为默认">设为默认</button>';
         }
         return '<tr>' +
             '<td>' + nameEsc + '</td>' +
-            '<td>' + escapeHtml(addr) + '</td>' +
-            '<td>' + escapeHtml(c.protocol || '') + '</td>' +
+            '<td>' + _esc(addr) + '</td>' +
+            '<td>' + _esc(c.protocol || '') + '</td>' +
+            '<td><span style="display:inline-flex;align-items:center">' + statusDot + '</span></td>' +
             '<td>' + def + '</td>' +
             '<td style="white-space:nowrap">' +
-                '<button class="btn btn-sm btn-primary" data-action="edit" data-id="' + escapeHtml(c.id || '') + '" aria-label="编辑连接 ' + nameEsc + '">编辑</button> ' +
+                '<button class="btn btn-sm btn-primary" data-action="edit" data-id="' + _esc(c.id || '') + '" aria-label="编辑连接 ' + nameEsc + '">编辑</button> ' +
                 defaultBtn + ' ' +
-                '<button class="btn btn-sm btn-danger" data-action="delete" data-id="' + escapeHtml(c.id || '') + '" aria-label="删除连接 ' + nameEsc + '">删除</button>' +
+                '<button class="btn btn-sm btn-danger" data-action="delete" data-id="' + _esc(c.id || '') + '" aria-label="删除连接 ' + nameEsc + '">删除</button>' +
             '</td>' +
         '</tr>';
     }).join('');
 }
 
-// 事件委托：tbody 上统一监听 click，依据 data-action 派发
-// 减少监听器数量（10 行 vs 30 个），同时避免 inline onclick 的 XSS 风险
 (function _bindConnTableDelegation() {
     function bind() {
         var tbody = document.getElementById('connTableBody');
@@ -64,7 +61,6 @@ function renderList() {
             var action = btn.getAttribute('data-action');
             var id = btn.getAttribute('data-id');
             if (!action || id == null) return;
-            // 反查 _connCache 获取真实 id（id 来源唯一为后端，避免任何 HTML 转义歧义）
             var conn = _connCache.find(function (c) { return String(c.id) === String(id); });
             var realId = conn ? conn.id : id;
             if (action === 'edit') openForm(realId);
@@ -80,9 +76,8 @@ function loadConnections() {
     var tbody = document.getElementById('connTableBody');
     var empty = document.getElementById('connEmpty');
     if (empty) empty.style.display = 'none';
-    // skeleton 占位：在 tbody 内渲染骨架行，保留表格结构
     if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="5" style="padding:18px"><div class="skeleton-list" aria-busy="true" aria-live="polite"><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:18px"><div class="skeleton-list" aria-busy="true" aria-live="polite"><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div></div></td></tr>';
     }
     var f = window.tdFetch || fetch;
     f('/api/connections')
@@ -92,18 +87,23 @@ function loadConnections() {
             renderList();
         })
         .catch(function () {
-            // 失败：在 tbody 内显示错误 + 重试按钮
             if (tbody) {
-                var retryId = 'connRetry_' + Date.now();
-                tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state empty-state-error" role="alert" style="padding:24px">' +
-                    '<div class="icon" aria-hidden="true">⚠️</div>' +
-                    '<div class="empty-title">加载失败</div>' +
-                    '<button class="btn btn-outline btn-sm" id="' + retryId + '">重试</button>' +
-                    '</div></td></tr>';
-                setTimeout(function () {
-                    var b = document.getElementById(retryId);
-                    if (b) b.addEventListener('click', loadConnections);
-                }, 0);
+                tbody.innerHTML = '<tr><td colspan="6" id="connErrCell"></td></tr>';
+                var cell = document.getElementById('connErrCell');
+                if (cell && window.renderState) {
+                    cell.style.padding = '0';
+                    renderState(cell, 'error', {
+                        message: '加载失败',
+                        hint: '请检查网络后重试',
+                        retry: loadConnections
+                    });
+                } else if (cell) {
+                    cell.innerHTML = '<div class="empty-state empty-state-error" role="alert" style="padding:24px">' +
+                        '<div class="icon" aria-hidden="true">⚠️</div>' +
+                        '<div class="empty-title">加载失败</div>' +
+                        '<button class="btn btn-outline btn-sm" onclick="loadConnections()">重试</button>' +
+                        '</div>';
+                }
             } else if (typeof showToast === 'function') {
                 showToast('加载连接失败', 'error');
             }
@@ -120,14 +120,12 @@ function openForm(id) {
     };
     if (id) {
         title.textContent = '编辑连接';
-        // 优先使用缓存，避免重复请求
         var conn = _connCache.find(function (x) { return x.id === id; });
         if (conn) {
             _fillConnForm(conn);
             openModal();
             return;
         }
-        // 缓存未命中（如页面刷新后直接编辑）：回退到 fetch
         var ff = window.tdFetch || fetch;
         ff('/api/connections')
             .then(function (r) { return r.json(); })
@@ -146,7 +144,6 @@ function openForm(id) {
     openModal();
 }
 
-// 填充表单：conn 为 null 时清空
 function _fillConnForm(conn) {
     document.getElementById('connId').value = conn ? (conn.id || '') : '';
     document.getElementById('connName').value = conn ? (conn.name || '') : '';
@@ -155,7 +152,6 @@ function _fillConnForm(conn) {
     document.getElementById('connProtocol').value = conn ? (conn.protocol || 'tcp') : 'tcp';
     var tokenEl = document.getElementById('connToken');
     tokenEl.value = conn ? (conn.token || '') : '';
-    // 重置 Token 显隐状态为隐藏
     tokenEl.type = 'password';
     var tg = document.querySelector('#connModal .pw-toggle');
     if (tg) {
@@ -164,7 +160,6 @@ function _fillConnForm(conn) {
         tg.setAttribute('aria-label', '显示 Token');
     }
     document.getElementById('connNote').value = conn ? (conn.note || '') : '';
-    // 清除可能的字段错误标记
     if (window.setFieldError) {
         setFieldError(document.getElementById('connName'), '');
         setFieldError(document.getElementById('connHost'), '');
@@ -176,7 +171,6 @@ function closeForm() {
     closeModal('connModal');
 }
 
-// 密码/Token 显隐切换
 function togglePwVisibility(inputId, btn) {
     var input = document.getElementById(inputId);
     if (!input) return;
@@ -188,7 +182,6 @@ function togglePwVisibility(inputId, btn) {
 }
 
 function submitForm() {
-    // 前端字段校验
     var nameEl = document.getElementById('connName');
     var hostEl = document.getElementById('connHost');
     var portEl = document.getElementById('connPort');
@@ -220,9 +213,20 @@ function submitForm() {
         protocol: payload.protocol, token: payload.token, note: payload.note,
     } : payload;
     var saveBtn = document.querySelector('#connModal .btn-primary');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+    var origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) saveBtn.textContent = '保存中...';
+    tdLock(saveBtn, function () {
+        return _doSubmit(url, body, isEdit);
+    }).then(function () {
+        if (saveBtn) saveBtn.textContent = origText;
+    }, function () {
+        if (saveBtn) saveBtn.textContent = origText;
+    });
+}
+
+function _doSubmit(url, body, isEdit) {
     var f = window.tdFetch || fetch;
-    f(url, {
+    return f(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -239,36 +243,38 @@ function submitForm() {
         })
         .catch(function (e) {
             showToast((e && e.userMessage) || '请求失败', 'error');
-        })
-        .finally(function () {
-            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
         });
 }
 
-// 测试连接（后端若无对应 API，仅提示失败，不影响主流程）
 function testConnection(evt) {
     var host = document.getElementById('connHost').value.trim();
     var port = parseInt(document.getElementById('connPort').value, 10);
     if (!host || isNaN(port)) { showToast('请先填写地址和端口', 'warning'); return; }
     var btn = (evt && evt.currentTarget) || (typeof event !== 'undefined' && event.target);
-    if (btn) { btn.disabled = true; var oldText = btn.textContent; btn.textContent = '测试中...'; }
-    try {
-        var f = window.tdFetch || fetch;
-        f('/api/connections/test', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ host: host, port: port })
+    if (!btn) { _doTest(host, port); return; }
+    var origText = btn.textContent;
+    btn.textContent = '测试中...';
+    tdLock(btn, function () {
+        return _doTest(host, port);
+    }).then(function () {
+        btn.textContent = origText;
+    }, function () {
+        btn.textContent = origText;
+    });
+}
+
+function _doTest(host, port) {
+    var f = window.tdFetch || fetch;
+    return f('/api/connections/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: host, port: port })
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d && d.success) showToast('连接成功', 'success');
+            else showToast('连接失败: ' + (d && d.error || '无法连接'), 'error');
         })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                if (d && d.success) showToast('连接成功', 'success');
-                else showToast('连接失败: ' + (d && d.error || '无法连接'), 'error');
-            })
-            .catch(function () { showToast('请求失败', 'error'); })
-            .finally(function () { if (btn) { btn.disabled = false; btn.textContent = oldText; } });
-    } catch (e) {
-        if (btn) { btn.disabled = false; btn.textContent = oldText; }
-        showToast('请求失败', 'error');
-    }
+        .catch(function () { showToast('请求失败', 'error'); });
 }
 
 function removeConnection(id) {
@@ -304,7 +310,6 @@ function removeConnection(id) {
                 });
         }, true);
     } else {
-        // 兼容回退：无自定义确认弹窗时直接删除
         var f = window.tdFetch || fetch;
         f('/api/connections/delete', {
             method: 'POST',
@@ -321,28 +326,32 @@ function removeConnection(id) {
 }
 
 function setDefault(id, btn) {
-    if (btn) { btn.disabled = true; var oldText = btn.textContent; btn.textContent = '...'; }
-    var f = window.tdFetch || fetch;
-    f('/api/connections/default', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: id }),
-    })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d.success) {
-                showToast('已设为默认', 'success');
-                loadConnections();
-            } else {
-                showToast(d.error || '失败', 'error');
-            }
+    var origText = btn ? btn.textContent : '';
+    if (btn) btn.textContent = '...';
+    tdLock(btn, function () {
+        var f = window.tdFetch || fetch;
+        return f('/api/connections/default', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id }),
         })
-        .catch(function () {
-            showToast('请求失败', 'error');
-        })
-        .finally(function () {
-            if (btn) { btn.disabled = false; btn.textContent = oldText; }
-        });
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.success) {
+                    showToast('已设为默认', 'success');
+                    loadConnections();
+                } else {
+                    showToast(d.error || '失败', 'error');
+                }
+            })
+            .catch(function () {
+                showToast('请求失败', 'error');
+            });
+    }).then(function () {
+        if (btn) btn.textContent = origText;
+    }, function () {
+        if (btn) btn.textContent = origText;
+    });
 }
 
 loadConnections();

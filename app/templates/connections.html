@@ -15,11 +15,12 @@
             <caption class="sr-only">服务器连接列表</caption>
             <thead>
                 <tr>
-                    <th>名称</th>
-                    <th>地址</th>
-                    <th>协议</th>
-                    <th>默认</th>
-                    <th>操作</th>
+                    <th scope="col">名称</th>
+                    <th scope="col">地址</th>
+                    <th scope="col">协议</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">默认</th>
+                    <th scope="col">操作</th>
                 </tr>
             </thead>
             <tbody id="connTableBody">
@@ -37,22 +38,22 @@
         <h2 id="connModalTitle">添加连接</h2>
         <input type="hidden" id="connId">
         <div class="form-group">
-            <label for="connName">名称</label>
-            <input type="text" id="connName" class="form-control" placeholder="例如：本地服务器" inputmode="text" enterkeyhint="next" name="conn-name" autocomplete="off">
+            <label for="connName">名称<span style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label>
+            <input type="text" id="connName" class="form-control" placeholder="例如：本地服务器" inputmode="text" enterkeyhint="next" name="conn-name" autocomplete="off" required aria-required="true">
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label for="connHost">地址 (host)</label>
-                <input type="text" id="connHost" class="form-control" placeholder="例如：127.0.0.1" inputmode="text" enterkeyhint="next" name="conn-host" autocomplete="off">
+                <label for="connHost">地址 (host)<span style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label>
+                <input type="text" id="connHost" class="form-control" placeholder="例如：127.0.0.1" inputmode="text" enterkeyhint="next" name="conn-host" autocomplete="off" required aria-required="true">
             </div>
             <div class="form-group form-group--narrow">
-                <label for="connPort">端口 (port)</label>
-                <input type="text" id="connPort" class="form-control" placeholder="8080" inputmode="numeric" pattern="[0-9]*" enterkeyhint="next" name="conn-port" autocomplete="off">
+                <label for="connPort">端口 (port)<span style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label>
+                <input type="number" id="connPort" class="form-control" placeholder="8080" min="1" max="65535" inputmode="numeric" enterkeyhint="next" name="conn-port" autocomplete="off" required aria-required="true">
             </div>
         </div>
         <div class="form-group">
-            <label for="connProtocol">协议</label>
-            <select id="connProtocol" class="form-control">
+            <label for="connProtocol">协议<span style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label>
+            <select id="connProtocol" class="form-control" required aria-required="true">
                 <option value="tcp">tcp</option>
                 <option value="ws">ws</option>
             </select>

@@ -75,9 +75,11 @@
         .auth-card p.sub { font-size: 13px; color: var(--ink-muted); text-align: center; margin-bottom: 30px; }
         .form-group { margin-bottom: 20px; }
         .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--ink); }
+        .form-group label .req { color: var(--danger, #e5484d); margin-left: 2px; }
         .form-group .input-wrap { position: relative; }
         .form-group .input-ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 15px; opacity: 0.5; pointer-events: none; }
         .form-group input { width: 100%; padding: 11px 12px 11px 38px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--surface-1); color: var(--ink); font-size: 14px; outline: none; box-sizing: border-box; transition: border-color .18s, box-shadow .18s; }
+        .form-group input[type=password] { padding-right: 52px; }
         .form-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.25); }
         @media (max-width: 768px) {
             .form-group input { font-size: 16px; }
@@ -111,17 +113,17 @@
         <p class="sub">ToolDelta Web 管理面板</p>
         <form id="loginForm" novalidate>
             <div class="form-group">
-                <label for="username">用户名</label>
+                <label for="username">用户名<span class="req" aria-hidden="true">*</span></label>
                 <div class="input-wrap">
                     <span class="input-ico" aria-hidden="true">👤</span>
-                    <input type="text" id="username" name="username" placeholder="输入用户名" autocomplete="username" enterkeyhint="next" autofocus>
+                    <input type="text" id="username" name="username" placeholder="输入用户名" autocomplete="username" enterkeyhint="next" autofocus required aria-required="true">
                 </div>
             </div>
             <div class="form-group">
-                <label for="password">密码</label>
+                <label for="password">密码<span class="req" aria-hidden="true">*</span></label>
                 <div class="input-wrap">
                     <span class="input-ico" aria-hidden="true">🔒</span>
-                    <input type="password" id="password" name="password" placeholder="输入密码" autocomplete="current-password" enterkeyhint="go">
+                    <input type="password" id="password" name="password" placeholder="输入密码" autocomplete="current-password" enterkeyhint="go" required aria-required="true">
                     <button type="button" class="pw-toggle" aria-pressed="false" aria-label="显示密码" onclick="toggleLoginPw(this)">显示</button>
                 </div>
             </div>
@@ -149,31 +151,36 @@
             btn.setAttribute('aria-pressed', isPw ? 'true' : 'false');
             btn.textContent = isPw ? '隐藏' : '显示';
             btn.setAttribute('aria-label', isPw ? '隐藏密码' : '显示密码');
+            i.focus();
         }
         function setLoginErr(msg) {
             var errEl = document.getElementById('loginError');
             if (errEl) errEl.textContent = msg || '';
         }
         function doLogin() {
-            var u = document.getElementById('username').value.trim();
-            var p = document.getElementById('password').value;
-            if (!u || !p) {
+            var u = document.getElementById('username');
+            var p = document.getElementById('password');
+            var uv = u.value.trim();
+            var pv = p.value;
+            u.removeAttribute('aria-invalid');
+            p.removeAttribute('aria-invalid');
+            if (!uv || !pv) {
                 setLoginErr('请输入用户名和密码');
-                if (!u) document.getElementById('username').focus();
-                else {
-                    var pw0 = document.getElementById('password');
-                    pw0.setAttribute('aria-invalid', 'true');
-                    pw0.focus();
+                if (!uv) {
+                    u.setAttribute('aria-invalid', 'true');
+                    u.focus();
+                } else {
+                    p.setAttribute('aria-invalid', 'true');
+                    p.focus();
                 }
                 return;
             }
             setLoginErr('');
-            document.getElementById('password').removeAttribute('aria-invalid');
             var btn = document.getElementById('loginBtn');
             var spinner = btn.querySelector('.btn-spinner');
             btn.disabled = true;
             if (spinner) spinner.hidden = false;
-            fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p}) })
+            fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:uv, password:pv}) })
             .then(function(r){return r.json()})
             .then(function(d){
                 if (d.success) {
@@ -184,10 +191,9 @@
                     btn.disabled = false;
                     if (spinner) spinner.hidden = true;
                     setLoginErr(d.error || '用户名或密码错误');
-                    var pwEl = document.getElementById('password');
-                    pwEl.setAttribute('aria-invalid', 'true');
-                    pwEl.value = '';
-                    pwEl.focus();
+                    p.setAttribute('aria-invalid', 'true');
+                    p.value = '';
+                    p.focus();
                 }
             })
             .catch(function(){

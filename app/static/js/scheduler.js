@@ -1,327 +1,222 @@
-// 定时任务模块前端逻辑
+let jobs = [];
 
-function escapeHtml(s) {
-    if (s === null || s === undefined) return '';
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function typeText(job) {
-    if (job.type === 'interval') {
-        return '每 ' + (job.interval || '?') + ' 秒';
-    }
-    if (job.type === 'daily') {
-        var hh = String(job.hour === null || job.hour === undefined ? '--' : job.hour).padStart(2, '0');
-        var mm = String(job.minute === null || job.minute === undefined ? '--' : job.minute).padStart(2, '0');
-        return '每日 ' + hh + ':' + mm;
-    }
-    return job.type || '';
-}
-
-function loadJobs() {
-    var body = document.getElementById('jobsBody');
-    // 加载态：骨架屏（参考 main.js renderState 四态组件）
-    if (body && window.renderState) {
-        body.innerHTML = '<tr><td colspan="8">' +
-            '<div class="skeleton-list" aria-busy="true" aria-live="polite">' +
-            '<div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>' +
-            '</div></td></tr>';
-    }
-    fetch('/api/scheduler/jobs')
-        .then(function (r) { return r.json(); })
-        .then(function (jobs) {
-            if (!body) return;
-            if (!jobs || jobs.length === 0) {
-                // 空态：带 CTA 引导用户添加首个任务
-                if (window.renderState) {
-                    body.innerHTML = '<tr><td colspan="8" id="jobsEmptyCell"></td></tr>';
-                    var cell = document.getElementById('jobsEmptyCell');
-                    renderState(cell, 'empty', {
-                        icon: '⏰', title: '暂无定时任务',
-                        hint: '创建第一个任务即可按计划自动执行命令',
-                        cta: '添加任务', ctaFn: function () { if (typeof openAdd === 'function') openAdd(); }
-                    });
-                } else {
-                    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-subtle)">暂无任务，点击右上角“添加任务”创建。</td></tr>';
-                }
-                return;
-            }
-            var html = '';
-            jobs.forEach(function (job) {
-                var enabled = !!job.enabled;
-                // 通过 data-id 承载 job.id + 事件委托，避免 onchange/onclick 字符串拼接导致的 JS 字面量逃逸
-                var eid = escapeHtml(job.id);
-                html += '<tr>';
-                html += '<td>' + escapeHtml(job.name) + '</td>';
-                html += '<td>' + escapeHtml(typeText(job)) + '</td>';
-                html += '<td><code style="font-size:12px">' + escapeHtml(job.command) + '</code></td>';
-                html += '<td><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
-                    + '<input type="checkbox" class="job-toggle" data-id="' + eid + '" ' + (enabled ? 'checked' : '') + ' style="accent-color:var(--primary)"> '
-                    + (enabled ? '已启用' : '已关闭') + '</label></td>';
-                html += '<td>' + escapeHtml(job.run_count || 0) + '</td>';
-                html += '<td style="font-size:12px;color:var(--ink-subtle)">' + escapeHtml(job.last_run || '—') + '</td>';
-                html += '<td style="font-size:12px;color:var(--ink-muted)">' + escapeHtml(job.next_run || '—') + '</td>';
-                html += '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'
-                    + '<button class="btn btn-outline btn-sm job-edit" data-id="' + eid + '">编辑</button>'
-                    + '<button class="btn btn-outline btn-sm job-run" data-id="' + eid + '">立即运行</button>'
-                    + '<button class="btn btn-danger btn-sm job-delete" data-id="' + eid + '">删除</button>'
-                    + '</div></td>';
-                html += '</tr>';
-            });
-            body.innerHTML = html;
-        })
-        .catch(function () {
-            if (body && window.renderState) {
-                body.innerHTML = '<tr><td colspan="8" id="jobsErrorCell"></td></tr>';
-                renderState(document.getElementById('jobsErrorCell'), 'error', {
-                    message: '加载任务失败', retry: loadJobs
-                });
-            } else {
-                showToast('加载任务失败', 'error');
-            }
+// 转义函数：加载时 main.js 可能尚未执行，用惰性查找
+function _esc(s) {
+    return (window._escHtml || function(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function(m) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
         });
+    })(s);
+}
+function escapeHtml(s) { return _esc(s); }
+
+// 时间格式化（秒级时间戳或ISO字符串）
+function fmtTime(ts) {
+    if (!ts) return '—';
+    var d = typeof ts === 'number' ? new Date(ts < 1e12 ? ts * 1000 : ts) : new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    var p = function(n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
-// 事件委托：在 #jobsBody 上集中处理按钮点击 / 勾选切换
-(function () {
-    var body = document.getElementById('jobsBody');
-    if (!body) return;
-    body.addEventListener('click', function (e) {
-        var t = e.target;
-        while (t && t !== body) {
-            if (t.classList) {
-                if (t.classList.contains('job-edit')) {
-                    openEdit(t.getAttribute('data-id') || '');
-                    return;
-                }
-                if (t.classList.contains('job-run')) {
-                    runNow(t.getAttribute('data-id') || '', t);
-                    return;
-                }
-                if (t.classList.contains('job-delete')) {
-                    removeJob(t.getAttribute('data-id') || '');
-                    return;
-                }
-            }
-            t = t.parentNode;
+async function apiCall(url, method, body) {
+    var opts = { method: method || 'GET', headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    var f = window.tdFetch || fetch;
+    var r = await f(url, opts);
+    var ct = r.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') === -1) throw new Error('服务器响应格式错误');
+    var d = await r.json();
+    if (d.success === false) throw new Error(d.message || '操作失败');
+    return d;
+}
+
+async function loadJobs() {
+    var tbody = document.getElementById('jobsBody');
+    try {
+        jobs = await apiCall('/api/scheduler/jobs');
+        if (!Array.isArray(jobs)) jobs = [];
+        if (jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">暂无任务，点击"添加任务"创建</td></tr>';
+            return;
         }
-    });
-    body.addEventListener('change', function (e) {
-        var t = e.target;
-        if (t && t.classList && t.classList.contains('job-toggle')) {
-            toggleEnabled(t.getAttribute('data-id') || '', t);
-        }
-    });
-})();
-
-function toggleEnabled(id, checkbox) {
-    // 兼容旧调用 toggleEnabled(id, boolean) 与新调用 toggleEnabled(id, element)
-    var isEl = checkbox && typeof checkbox.checked === 'boolean';
-    var enable = isEl ? checkbox.checked : !!checkbox;
-    var prev = enable;
-    if (isEl) checkbox.disabled = true;
-    fetch('/api/scheduler/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: id, enabled: enable })
-    })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (isEl) checkbox.disabled = false;
-            if (d && d.success) {
-                showToast(enable ? '已启用' : '已禁用', 'success');
-                loadJobs();
-            } else {
-                if (isEl) checkbox.checked = prev;
-                showToast('操作失败: ' + (d && (d.message || d.error) || '未知错误'), 'error');
-                loadJobs();
-            }
-        })
-        .catch(function () {
-            if (isEl) { checkbox.checked = prev; checkbox.disabled = false; }
-            showToast('网络请求失败，已回滚', 'error');
-            loadJobs();
-        });
+        tbody.innerHTML = jobs.map(function(j) {
+            var typeLabel = j.type === 'interval' ? '间隔' : j.type === 'daily' ? '每日' : 'Cron';
+            var lastRunBadge = j.last_error
+                ? '<span class="badge badge-danger" title="' + escapeHtml(j.last_error) + '">失败</span>'
+                : '';
+            var toggle = '<label class="switch"><input type="checkbox" ' + (j.enabled ? 'checked' : '') + ' onchange="toggleJob(\'' + j.id + '\', this.checked)"><span class="slider"></span></label>';
+            return '<tr>' +
+                '<td><strong>' + escapeHtml(j.name) + '</strong></td>' +
+                '<td>' + typeLabel + '</td>' +
+                '<td><code>' + escapeHtml(j.command) + '</code></td>' +
+                '<td>' + toggle + '</td>' +
+                '<td>' + (j.run_count || 0) + '</td>' +
+                '<td>' + lastRunBadge + ' ' + (j.last_run ? fmtTime(j.last_run) : '—') + '</td>' +
+                '<td>' + (j.enabled ? (j.next_run ? fmtTime(j.next_run) : '<span style="color:#888">—</span>') : '<span style="color:#888">未启用</span>') + '</td>' +
+                '<td>' +
+                    '<button class="btn btn-sm btn-outline" onclick="withGuard(this, function(){runNow(\'' + j.id + '\')})">运行</button> ' +
+                    '<button class="btn btn-sm btn-outline" onclick="openEdit(\'' + j.id + '\')">编辑</button> ' +
+                    '<button class="btn btn-sm btn-danger" onclick="withGuard(this, function(){deleteJob(\'' + j.id + '\')})">删除</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#e5484d">加载失败: ' + escapeHtml(e.message) + '</td></tr>';
+    }
 }
 
-function runNow(id, btn) {
-    // 防重复点击 + loading 文案（按钮由 onclick 传入 this）
-    var origText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = '运行中...'; }
-    fetch('/api/scheduler/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: id })
-    })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d && d.success) { showToast('已立即执行', 'success'); loadJobs(); }
-            else { showToast((d && (d.message || d.error)) || '执行失败', 'error'); }
-        })
-        .catch(function () { showToast('请求失败', 'error'); })
-        .finally(function () { if (btn) { btn.disabled = false; btn.textContent = origText; } });
+function switchType() {
+    var t = document.getElementById('job_type').value;
+    document.getElementById('row_interval').style.display = t === 'interval' ? '' : 'none';
+    document.getElementById('row_daily').style.display = t === 'daily' ? '' : 'none';
+    document.getElementById('row_cron').style.display = t === 'cron' ? '' : 'none';
 }
 
-function removeJob(id) {
-    showConfirm('确定删除该定时任务吗？', function (ok) {
-        if (!ok) return;
-        fetch('/api/scheduler/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: id })
-        })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                if (d.success) { showToast('已删除', 'success'); loadJobs(); }
-                else { showToast(d.message || '删除失败', 'error'); }
-            })
-            .catch(function () { showToast('请求失败', 'error'); });
-    }, true);
-}
-
-// ─── 表单 ───────────────────────────────────────────
-
-function syncTypeFields() {
-    var type = document.getElementById('job_type').value;
-    var isInterval = type === 'interval';
-    document.getElementById('row_interval').style.display = isInterval ? 'block' : 'none';
-    document.getElementById('row_daily').style.display = isInterval ? 'none' : 'block';
+function setCronPreset(expr) {
+    document.getElementById('job_cron').value = expr;
 }
 
 function openAdd() {
     document.getElementById('jobModalTitle').textContent = '添加任务';
-    document.getElementById('jobSaveBtn').textContent = '添加';
     document.getElementById('job_id').value = '';
     document.getElementById('job_name').value = '';
     document.getElementById('job_type').value = 'interval';
     document.getElementById('job_interval').value = '3600';
     document.getElementById('job_hour').value = '4';
     document.getElementById('job_minute').value = '0';
+    document.getElementById('job_cron').value = '0 * * * *';
     document.getElementById('job_command').value = '';
     document.getElementById('job_enabled').checked = false;
-    syncTypeFields();
-    if (window._openModal) _openModal('jobModal');
-    else document.getElementById('jobModal').classList.add('active');
+    switchType();
+    document.getElementById('jobModal').classList.add('active');
+    document.body.classList.add('modal-open');
+    setTimeout(function() { document.getElementById('job_name').focus(); }, 100);
 }
 
 function openEdit(id) {
-    fetch('/api/scheduler/jobs')
-        .then(function (r) { return r.json(); })
-        .then(function (jobs) {
-            var job = jobs.find(function (j) { return j.id === id; });
-            if (!job) { showToast('任务不存在', 'error'); return; }
-            document.getElementById('jobModalTitle').textContent = '编辑任务';
-            document.getElementById('jobSaveBtn').textContent = '保存';
-            document.getElementById('job_id').value = job.id;
-            document.getElementById('job_name').value = job.name || '';
-            document.getElementById('job_type').value = job.type || 'interval';
-            document.getElementById('job_interval').value = job.interval || 3600;
-            document.getElementById('job_hour').value = job.hour === null || job.hour === undefined ? 4 : job.hour;
-            document.getElementById('job_minute').value = job.minute === null || job.minute === undefined ? 0 : job.minute;
-            document.getElementById('job_command').value = job.command || '';
-            document.getElementById('job_enabled').checked = !!job.enabled;
-            syncTypeFields();
-            if (window._openModal) _openModal('jobModal');
-            else document.getElementById('jobModal').classList.add('active');
-        })
-        .catch(function () { showToast('加载失败', 'error'); });
+    var j = jobs.find(function(x) { return x.id === id; });
+    if (!j) return;
+    document.getElementById('jobModalTitle').textContent = '编辑任务';
+    document.getElementById('job_id').value = j.id;
+    document.getElementById('job_name').value = j.name || '';
+    document.getElementById('job_type').value = j.type || 'interval';
+    document.getElementById('job_interval').value = j.interval || 3600;
+    document.getElementById('job_hour').value = (j.hour !== null && j.hour !== undefined) ? j.hour : 4;
+    document.getElementById('job_minute').value = (j.minute !== null && j.minute !== undefined) ? j.minute : 0;
+    document.getElementById('job_cron').value = j.cron || '0 * * * *';
+    document.getElementById('job_command').value = j.command || '';
+    document.getElementById('job_enabled').checked = !!j.enabled;
+    switchType();
+    document.getElementById('jobModal').classList.add('active');
+    document.body.classList.add('modal-open');
 }
 
 function closeJobModal() {
-    closeModal('jobModal');
+    document.getElementById('jobModal').classList.remove('active');
+    document.body.classList.remove('modal-open');
 }
 
-function submitJob() {
+async function submitJob() {
+    var id = document.getElementById('job_id').value;
+    var name = document.getElementById('job_name').value.trim();
     var type = document.getElementById('job_type').value;
-    // ── 表单校验（使用 main.js setFieldError，缺失时静默跳过） ──
-    var nameEl = document.getElementById('job_name');
-    var intervalEl = document.getElementById('job_interval');
-    var hourEl = document.getElementById('job_hour');
-    var minuteEl = document.getElementById('job_minute');
-    var clearErr = function (el) { if (el && window.setFieldError) setFieldError(el, ''); };
-    clearErr(nameEl); clearErr(intervalEl); clearErr(hourEl); clearErr(minuteEl);
-    if (!nameEl.value.trim()) {
-        if (window.setFieldError) setFieldError(nameEl, '名称不能为空');
-        nameEl.focus(); return;
-    }
+    var command = document.getElementById('job_command').value.trim();
+    if (!name) { showToast('请输入任务名称', 'warning'); return; }
+    if (!command) { showToast('请输入命令', 'warning'); return; }
+    var body = {name: name, type: type, command: command, enabled: document.getElementById('job_enabled').checked};
     if (type === 'interval') {
-        var iv = parseInt(intervalEl.value, 10);
-        if (isNaN(iv) || iv < 1) {
-            if (window.setFieldError) setFieldError(intervalEl, '间隔必须 ≥ 1 秒');
-            intervalEl.focus(); return;
-        }
+        body.interval = parseInt(document.getElementById('job_interval').value) || 0;
     } else if (type === 'daily') {
-        var h = parseInt(hourEl.value, 10);
-        var m = parseInt(minuteEl.value, 10);
-        if (isNaN(h) || h < 0 || h > 23) {
-            if (window.setFieldError) setFieldError(hourEl, '小时 0-23');
-            hourEl.focus(); return;
-        }
-        if (isNaN(m) || m < 0 || m > 59) {
-            if (window.setFieldError) setFieldError(minuteEl, '分钟 0-59');
-            minuteEl.focus(); return;
-        }
-    }
-
-    var payload = {
-        id: document.getElementById('job_id').value || undefined,
-        name: nameEl.value,
-        type: type,
-        command: document.getElementById('job_command').value,
-        enabled: document.getElementById('job_enabled').checked
-    };
-    // parseInt 失败时回退为 0，避免向服务端发送 NaN
-    var safeInt = function (id) { var v = parseInt(document.getElementById(id).value, 10); return isNaN(v) ? 0 : v; };
-    if (type === 'interval') {
-        payload.interval = safeInt('job_interval');
+        body.hour = parseInt(document.getElementById('job_hour').value);
+        body.minute = parseInt(document.getElementById('job_minute').value);
     } else {
-        payload.hour = safeInt('job_hour');
-        payload.minute = safeInt('job_minute');
+        body.cron = document.getElementById('job_cron').value.trim();
+        if (!body.cron) { showToast('请输入 Cron 表达式', 'warning'); return; }
     }
+    try {
+        if (id) {
+            body.id = id;
+            await apiCall('/api/scheduler/update', 'POST', body);
+            showToast('任务已更新', 'success');
+        } else {
+            await apiCall('/api/scheduler/add', 'POST', body);
+            showToast('任务已创建', 'success');
+        }
+        closeJobModal();
+        loadJobs();
+    } catch (e) { showToast(e.message, 'error'); }
+}
 
-    var isEdit = !!payload.id;
-    var url = isEdit ? '/api/scheduler/update' : '/api/scheduler/add';
+async function toggleJob(id, enabled) {
+    try {
+        await apiCall('/api/scheduler/update', 'POST', {id: id, enabled: enabled});
+        loadJobs();
+    } catch (e) { showToast(e.message, 'error'); loadJobs(); }
+}
 
-    // 保存按钮 loading 态，防重复提交
-    var saveBtn = document.getElementById('jobSaveBtn');
-    var origText = saveBtn ? saveBtn.textContent : '';
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+async function deleteJob(id) {
+    if (!confirm('确定要删除该任务吗？')) return;
+    try {
+        await apiCall('/api/scheduler/delete', 'POST', {id: id});
+        showToast('任务已删除', 'success');
+        loadJobs();
+    } catch (e) { showToast(e.message, 'error'); }
+}
 
-    fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d && d.success) {
-                showToast(isEdit ? '已保存' : '已添加', 'success');
-                closeJobModal();
-                loadJobs();
-            } else {
-                showToast((d && (d.message || d.error)) || '保存失败', 'error');
+async function runNow(id) {
+    try {
+        await apiCall('/api/scheduler/run', 'POST', {id: id});
+        showToast('已触发执行', 'success');
+        loadJobs();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+function handleEnterKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        var target = e.target;
+        if (target.tagName === 'INPUT' && target.type !== 'textarea') {
+            e.preventDefault();
+            var type = document.getElementById('job_type').value;
+            if (target.id === 'job_name') {
+                document.getElementById('job_command').focus();
+            } else if (target.id === 'job_command' || target.enterkeyhint === 'done') {
+                var btn = document.getElementById('jobSaveBtn');
+                withGuard(btn, submitJob);
+            } else if (type === 'interval' && target.id === 'job_interval') {
+                document.getElementById('job_command').focus();
+            } else if (type === 'daily') {
+                if (target.id === 'job_hour') document.getElementById('job_minute').focus();
+                else if (target.id === 'job_minute') document.getElementById('job_command').focus();
+            } else if (type === 'cron' && target.id === 'job_cron') {
+                document.getElementById('job_command').focus();
             }
-        })
-        .catch(function () { showToast('请求失败', 'error'); })
-        .finally(function () { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText; } });
+        }
+    }
 }
 
-// 类型切换实时更新表单字段显隐
-var _typeEl = document.getElementById('job_type');
-if (_typeEl) _typeEl.addEventListener('change', syncTypeFields);
-
-loadJobs();
-// 优先使用全局可见性感知轮询器；缺失时本地 setInterval 也响应 Page Visibility 暂停
-if (window.TDPoll) {
-    window.TDPoll.register(loadJobs, 5000);
-} else {
-    var _timer = setInterval(loadJobs, 5000);
-    document.addEventListener('visibilitychange', function () {
-        if (document.hidden) { if (_timer) { clearInterval(_timer); _timer = null; } }
-        else if (!_timer) { _timer = setInterval(loadJobs, 5000); }
+document.addEventListener('DOMContentLoaded', function() {
+    loadJobs();
+    document.getElementById('job_type').addEventListener('change', switchType);
+    document.getElementById('jobSaveBtn').addEventListener('click', function() {
+        withGuard(this, submitJob);
     });
-}
+    document.getElementById('jobModal').addEventListener('click', function(e) {
+        if (e.target === this) closeJobModal();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && document.getElementById('jobModal').classList.contains('active')) {
+            closeJobModal();
+        }
+        if (document.getElementById('jobModal').classList.contains('active')) {
+            handleEnterKey(e);
+        }
+    });
+    document.querySelectorAll('.cron-preset').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            setCronPreset(this.getAttribute('data-cron'));
+        });
+    });
+    if (window.TDPoll) { window.TDPoll.register(loadJobs, 5000); }
+    else { setInterval(loadJobs, 5000); }
+});

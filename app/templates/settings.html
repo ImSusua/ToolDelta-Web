@@ -1,37 +1,28 @@
 {% extends "base.html" %}
+{% set active_page = "settings" %}
 {% block content %}
-<div style="max-width:640px;margin:0 auto">
+<div class="settings-container">
     <h1 class="page-title">面板设置</h1>
 
-    <div class="card" style="margin-bottom:20px">
+    <div class="card">
         <h2 class="card-title">面板壁纸</h2>
         <p class="help-text">设置后每次打开面板都会看到这张壁纸，不会自动更换。点击「随机壁纸」随机切换。</p>
         <div id="wallpaperPreview" class="wallpaper-preview"></div>
-        <script>
-          // 通过 |tojson 安全输出 URL，再由 JS 设置 backgroundImage，避免内联 style 拼接造成的 CSS 注入
-          // 纵深防御:即便后端 wallpaper_service.save() 已拦截危险字符,这里再前端兜底
-          // 转义可逃出 CSS url() 上下文的字符(与 wallpaper.js applyWallpaper 对齐):
-          // ' " \ ) ( ; { } 防 backgroundImage 表达式被构造 CSS 注入
-          (function(){
-            var wUrl = {{ wallpaper_url|tojson }};
-            if (wUrl) {
-              var el = document.getElementById('wallpaperPreview');
-              if (el) el.style.backgroundImage = "url('" + String(wUrl).replace(/['"\\(){};]/g, encodeURIComponent) + "')";
-            }
-          })();
-        </script>
-        <div class="form-row" style="flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="fetchWallpaper()">随机壁纸</button>
-            <button class="btn btn-outline" onclick="clearWallpaper()">清除壁纸</button>
+        <div class="form-row">
+            <button class="btn btn-primary" id="fetchWallpaperBtn">随机壁纸</button>
+            <button class="btn btn-outline" id="clearWallpaperBtn">清除壁纸</button>
         </div>
-        <div class="form-row" style="margin-top:10px">
-            <input type="text" id="manualWallpaperUrl" class="form-control" placeholder="或输入图片URL..." inputmode="url" enterkeyhint="done" name="wallpaper_url" autocomplete="off">
-            <button class="btn btn-sm btn-outline" onclick="setManualWallpaper()">应用</button>
+        <div class="form-row">
+            <div class="input-with-toggle form-group">
+                <label class="sr-only" for="manualWallpaperUrl">图片URL</label>
+                <input type="text" id="manualWallpaperUrl" class="form-control" placeholder="或输入图片URL..." inputmode="url" enterkeyhint="done" name="wallpaper_url" autocomplete="off">
+            </div>
+            <button class="btn btn-sm btn-outline" id="setManualWallpaperBtn">应用</button>
         </div>
-        <div id="wallpaperError" class="form-hint" style="color:var(--danger);display:none;margin-top:6px"></div>
+        <div id="wallpaperError" class="form-hint form-error" hidden></div>
     </div>
 
-    <div class="card" style="margin-bottom:20px">
+    <div class="card">
         <h2 class="card-title">版本信息</h2>
         <div class="version-info">
             <div>Web 面板版本：<span class="version-val">{{ versions.web_version }}</span></div>
@@ -40,7 +31,7 @@
         </div>
     </div>
 
-    <div class="card" style="margin-bottom:20px">
+    <div class="card">
         <h2 class="card-title">修改密码</h2>
         <div class="form-group">
             <label class="form-label" for="oldPw">当前密码</label>
@@ -48,484 +39,129 @@
         </div>
         <div class="form-group">
             <label class="form-label" for="newPw">新密码</label>
-            <input type="password" id="newPw" name="new-password" class="form-control" autocomplete="new-password" enterkeyhint="next" oninput="renderSettingsPwStrength(this.value)">
+            <input type="password" id="newPw" name="new-password" class="form-control" autocomplete="new-password" enterkeyhint="next">
             <span class="form-hint">密码长度1-64位，建议8位以上并包含字母、数字、特殊字符；弱密码仅提示不阻止修改。</span>
-            <div id="settingsPwBox" class="pw-strength-box" style="display:none;margin-top:8px"></div>
+            <div id="settingsPwBox" class="pw-strength-box" hidden></div>
         </div>
         <div class="form-group">
             <label class="form-label" for="newPw2">确认新密码</label>
             <input type="password" id="newPw2" name="new-password-confirm" class="form-control" autocomplete="new-password" enterkeyhint="done">
         </div>
-        <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
+        <button class="btn btn-primary" id="changePwBtn">修改密码</button>
     </div>
-    <script>
-    // 设置页：复用 setup.html 的实时密码强度指示器逻辑（弱密码仅提示不阻止）
-    function renderSettingsPwStrength(pw) {
-        var box = document.getElementById('settingsPwBox');
-        if (!box) return;
-        if (!pw) { box.style.display = 'none'; box.innerHTML = ''; return; }
-        var hasL = /[A-Za-z]/.test(pw), hasD = /\d/.test(pw), hasS = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pw);
-        var level = 'weak';
-        if (pw.length >= 12 && hasL && hasD && hasS) level = 'strong';
-        else if (pw.length >= 8 && hasL && hasD) level = 'medium';
-        // 防御性白名单:level 拼入 class 属性(pw-bar-<level>),防止未来扩展时
-        // 引入未预期值导致 class 上下文逃逸。与 setup.html 的 checkPwStrength 一致。
-        if (level !== 'weak' && level !== 'medium' && level !== 'strong') level = 'weak';
-        var tips = [];
-        if (pw.length < 8) tips.push('建议长度至少8位');
-        if (!hasL) tips.push('建议包含字母');
-        if (!hasD) tips.push('建议包含数字');
-        if (!hasS) tips.push('建议包含特殊字符');
-        if ({password123:1,12345678:1,qwerty123:1,admin123:1,11111111:1}[pw.toLowerCase()]) tips.push('该密码过于常见');
-        if (level === 'strong' && !tips.length) {
-            box.style.display = 'block';
-            box.innerHTML = '<div class="pw-meter"><span class="pw-bar pw-bar-strong"></span></div><div class="pw-hint pw-hint-strong">密码强度：强 ✓</div>';
-            return;
-        }
-        var labels = {weak:'弱', medium:'中', strong:'强'};
-        box.style.display = 'block';
-        box.innerHTML = '<div class="pw-meter"><span class="pw-bar pw-bar-' + level + '"></span></div>' +
-            '<div class="pw-hint pw-hint-' + level + '">密码强度：' + labels[level] + (tips.length ? ' · ' + tips.join('；') : '') + '</div>';
-    }
-    </script>
 
-    <div class="card" style="margin-bottom:20px">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">启动器配置</h2>
-        <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">编辑 ToolDelta 基本配置 (ToolDelta基本配置.json)</p>
+    <div class="card">
+        <h2 class="card-title">启动器配置</h2>
+        <p class="help-text">编辑 ToolDelta 基本配置 (ToolDelta基本配置.json)</p>
         <div id="launcherConfigForm">
-            <div style="margin-bottom:10px">
-                <label for="cfg_github_mirror" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">全局GitHub镜像 <span style="color:var(--ink-tertiary);font-weight:400">(只读)</span></label>
-                <input type="text" id="cfg_github_mirror" readonly style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-3);color:var(--ink-subtle);font-size:13px;outline:none;box-sizing:border-box">
+            <div class="form-group">
+                <label class="form-label" for="cfg_github_mirror">全局GitHub镜像 <span class="form-label-muted">(只读)</span></label>
+                <input type="text" id="cfg_github_mirror" class="form-control form-control-readonly" readonly>
             </div>
-            <div style="margin-bottom:10px">
-                <label for="cfg_logging" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">是否记录日志</label>
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-                    <input type="checkbox" id="cfg_logging" style="accent-color:var(--primary)"> 启用日志记录
+            <div class="form-group">
+                <label class="check-label" for="cfg_logging">
+                    <input type="checkbox" id="cfg_logging"> 启用日志记录
                 </label>
             </div>
-            <div style="margin-bottom:10px">
-                <label for="cfg_market_source" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">插件市场源</label>
-                <select id="cfg_market_source" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
+            <div class="form-group">
+                <label class="form-label" for="cfg_market_source">插件市场源</label>
+                <select id="cfg_market_source" class="form-control">
                     <option value="">— 请选择 —</option>
                 </select>
             </div>
-            <div style="margin-bottom:10px;padding-top:10px;border-top:1px solid var(--hairline)">
-                <span style="font-size:13px;font-weight:600;color:var(--ink-muted)">FateArk 接入点</span>
+            <div class="form-section-title">FateArk 接入点</div>
+            <div class="form-group">
+                <label class="form-label" for="cfg_fate_server">服务器号</label>
+                <input type="number" id="cfg_fate_server" class="form-control">
             </div>
-            <div style="margin-bottom:10px">
-                <label for="cfg_fate_server" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">服务器号</label>
-                <input type="number" id="cfg_fate_server" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
+            <div class="form-group">
+                <label class="form-label" for="cfg_fate_password">密码</label>
+                <input type="password" id="cfg_fate_password" class="form-control" autocomplete="current-password" enterkeyhint="next">
             </div>
-            <div style="margin-bottom:10px">
-                <label for="cfg_fate_password" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">密码</label>
-                <input type="password" id="cfg_fate_password" autocomplete="current-password" enterkeyhint="done" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
+            <div class="form-group">
+                <label class="form-label" for="cfg_fate_server_addr">验证服务器地址</label>
+                <input type="text" id="cfg_fate_server_addr" class="form-control" enterkeyhint="done">
             </div>
-            <div style="margin-bottom:10px">
-                <label for="cfg_fate_server_addr" style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:var(--ink-muted)">验证服务器地址</label>
-                <input type="text" id="cfg_fate_server_addr" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box">
-            </div>
-            <div style="margin-top:12px;display:flex;gap:8px">
-                <button class="btn btn-primary btn-sm" onclick="loadLauncherConfig()">刷新</button>
-                <button class="btn btn-success btn-sm" onclick="saveLauncherConfig()">保存配置</button>
+            <div class="form-actions">
+                <button class="btn btn-primary btn-sm" id="refreshLauncherBtn">刷新</button>
+                <button class="btn btn-success btn-sm" id="saveLauncherBtn">保存配置</button>
             </div>
         </div>
     </div>
 
-    <div class="card" style="margin-bottom:20px">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">Fbtoken</h2>
-        <p style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">Web 终端登录所需的 fbtoken，可在终端外修改</p>
-        <div style="display:flex;gap:8px">
-            <label for="fbtokenInput" class="sr-only">fbtoken</label>
-            <div class="input-with-toggle" style="flex:1">
-                <input type="password" id="fbtokenInput" placeholder="输入 fbtoken..." style="width:100%;padding:8px 10px;padding-right:40px;border-radius:6px;border:1px solid var(--border);background:var(--canvas);color:var(--ink);font-size:13px;outline:none;box-sizing:border-box" autocomplete="off">
-                <button type="button" class="pw-toggle" aria-pressed="false" aria-label="显示 fbtoken" onclick="toggleFbtokenVisibility(this)">显示</button>
+    <div class="card">
+        <h2 class="card-title">Fbtoken</h2>
+        <p class="help-text">Web 终端登录所需的 fbtoken，可在终端外修改</p>
+        <div class="form-row">
+            <div class="input-with-toggle fbtoken-input-wrap">
+                <label class="sr-only" for="fbtokenInput">fbtoken</label>
+                <input type="password" id="fbtokenInput" class="form-control" placeholder="输入 fbtoken..." autocomplete="off" enterkeyhint="done">
+                <button type="button" class="pw-toggle" id="fbtokenToggleBtn" aria-pressed="false" aria-label="显示 fbtoken">显示</button>
             </div>
             <button class="btn btn-outline btn-sm" onclick="tdCopy(document.getElementById('fbtokenInput').value, '已复制 fbtoken')" data-tip="复制当前 token" aria-label="复制 fbtoken">复制</button>
-            <button class="btn btn-primary btn-sm" onclick="saveFbtoken()">保存</button>
+            <button class="btn btn-primary btn-sm" id="saveFbtokenBtn">保存</button>
         </div>
-        <div id="fbtokenError" style="color:#f87171;font-size:12px;margin-top:6px;display:none"></div>
+        <div id="fbtokenError" class="form-hint form-error" hidden></div>
     </div>
-    <script>
-    // fbtoken 显隐切换:与 connections.js 的 togglePwVisibility 一致,但为避免
-    // 跨页 JS 加载顺序问题(defer 与非 defer 脚本执行时机差异)在此页内独立定义。
-    function toggleFbtokenVisibility(btn){
-        var input = document.getElementById('fbtokenInput');
-        if (!input) return;
-        var isPw = input.type === 'password';
-        input.type = isPw ? 'text' : 'password';
-        btn.setAttribute('aria-pressed', isPw ? 'true' : 'false');
-        btn.textContent = isPw ? '隐藏' : '显示';
-        btn.setAttribute('aria-label', isPw ? '隐藏 fbtoken' : '显示 fbtoken');
-    }
-    </script>
 
-    <div class="card" style="margin-bottom:20px">
-        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">关于面板</h2>
-        <div style="font-size:13px;color:var(--ink-muted);line-height:2">
-            <div><span style="color:var(--ink-subtle)">面板版本:</span> v1.0.0</div>
-            <div><span style="color:var(--ink-subtle)">Python:</span> <span id="aboutPython">-</span></div>
-            <div><span style="color:var(--ink-subtle)">系统:</span> <span id="aboutPlatform">-</span></div>
-            <div><span style="color:var(--ink-subtle)">ToolDelta目录:</span> <span id="aboutTdDir">-</span></div>
-            <div><span style="color:var(--ink-subtle)">插件数量:</span> <span id="aboutPlugins">-</span></div>
+    <div class="card">
+        <h2 class="card-title">关于面板</h2>
+        <div class="about-info">
+            <div><span class="about-label">面板版本:</span> v1.0.0</div>
+            <div><span class="about-label">Python:</span> <span id="aboutPython">-</span></div>
+            <div><span class="about-label">系统:</span> <span id="aboutPlatform">-</span></div>
+            <div><span class="about-label">ToolDelta目录:</span> <span id="aboutTdDir">-</span></div>
+            <div><span class="about-label">插件数量:</span> <span id="aboutPlugins">-</span></div>
         </div>
     </div>
 
     {% if session.get('role') == 10 %}
-    <div class="card" style="margin-bottom:20px">
+    <div class="card">
         <h2 class="card-title">用户管理</h2>
-        <div style="margin-bottom:12px">
-            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-                <input type="text" id="newUserName" class="form-control" placeholder="用户名" style="flex:1;min-width:120px">
-                <input type="password" id="newUserPw" class="form-control" name="new-user-password" placeholder="密码" autocomplete="new-password" enterkeyhint="done" style="flex:1;min-width:120px" oninput="renderCreateUserPwStrength(this.value)">
-                <select id="newUserRole" class="form-control" style="min-width:120px">
+        <div class="form-row user-create-row">
+            <div class="user-create-col">
+                <label for="newUserName" class="sr-only">用户名</label>
+                <input type="text" id="newUserName" class="form-control" placeholder="用户名" autocomplete="username">
+            </div>
+            <div class="user-create-col">
+                <label for="newUserPw" class="sr-only">密码</label>
+                <input type="password" id="newUserPw" class="form-control" name="new-user-password" placeholder="密码" autocomplete="new-password" enterkeyhint="next">
+            </div>
+            <div class="user-create-col-sm">
+                <label for="newUserRole" class="sr-only">角色</label>
+                <select id="newUserRole" class="form-control">
                     <option value="1">普通用户</option>
                     <option value="10">管理员</option>
                 </select>
-                <button class="btn btn-primary btn-sm" onclick="createUser()">添加用户</button>
             </div>
-            <div id="createUserPwBox" class="pw-strength-box" style="display:none"></div>
+            <button class="btn btn-primary btn-sm" id="createUserBtn">添加用户</button>
         </div>
-        <table>
-            <thead><tr><th>用户名</th><th>角色</th><th>最后登录</th><th>操作</th></tr></thead>
-            <tbody id="userList"></tbody>
-        </table>
+        <div id="createUserPwBox" class="pw-strength-box" hidden></div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead><tr><th scope="col">用户名</th><th scope="col">角色</th><th scope="col">最后登录</th><th scope="col">操作</th></tr></thead>
+                <tbody id="userList"></tbody>
+            </table>
+        </div>
     </div>
     {% endif %}
 
-    <div class="card card-danger" style="margin-bottom:20px">
+    <div class="card card-danger">
         <h2 class="card-title">危险操作</h2>
-        <p style="font-size:13px;color:var(--ink-muted);margin-bottom:16px">重置面板将清除所有面板配置信息（包括账号密码），此操作不可撤销。</p>
-        <button class="btn btn-danger" onclick="confirmReset()">一键重置面板</button>
+        <p class="help-text">重置面板将清除所有面板配置信息（包括账号密码），此操作不可撤销。</p>
+        <button class="btn btn-danger" id="resetPanelBtn">一键重置面板</button>
     </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
+<script src="/static/js/wallpaper.js"></script>
+<script src="/static/js/settings.js"></script>
 <script>
-// 加载预设市场源到下拉框
-function renderCreateUserPwStrength(pw) {
-    var box = document.getElementById('createUserPwBox');
-    if (!box) return;
-    if (!pw) { box.style.display = 'none'; box.innerHTML = ''; return; }
-    var hasL = /[A-Za-z]/.test(pw), hasD = /\d/.test(pw), hasS = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pw);
-    var level = 'weak';
-    if (pw.length >= 12 && hasL && hasD && hasS) level = 'strong';
-    else if (pw.length >= 8 && hasL && hasD) level = 'medium';
-    var tips = [];
-    if (pw.length < 8) tips.push('建议长度至少8位');
-    if (!hasL) tips.push('建议包含字母');
-    if (!hasD) tips.push('建议包含数字');
-    if (!hasS) tips.push('建议包含特殊字符');
-    if ({password123:1,12345678:1,qwerty123:1,admin123:1,11111111:1}[pw.toLowerCase()]) tips.push('该密码过于常见');
-    if (level === 'strong' && !tips.length) {
-        box.style.display = 'block';
-        box.innerHTML = '<div class="pw-meter"><span class="pw-bar pw-bar-strong"></span></div><div class="pw-hint pw-hint-strong">密码强度：强 ✓</div>';
-        return;
-    }
-    var labels = {weak:'弱', medium:'中', strong:'强'};
-    box.style.display = 'block';
-    box.innerHTML = '<div class="pw-meter"><span class="pw-bar pw-bar-' + level + '"></span></div>' +
-        '<div class="pw-hint pw-hint-' + level + '">密码强度：' + labels[level] + (tips.length ? ' · ' + tips.join('；') : '') + '</div>';
-}
-function loadMarketSources() {
-    fetch('/api/market/sources')
-        .then(function(r){return r.json()})
-        .then(function(sources){
-            var sel = document.getElementById('cfg_market_source');
-            sources.forEach(function(s){
-                var opt = document.createElement('option');
-                opt.value = s.url;
-                opt.textContent = s.name;
-                sel.appendChild(opt);
-            });
-        });
-}
-loadMarketSources();
-
-function loadLauncherConfig() {
-    fetch('/api/launcher/config').then(function(r){return r.json()}).then(function(d){
-        document.getElementById('cfg_github_mirror').value = d['全局GitHub镜像'] || '';
-        document.getElementById('cfg_logging').checked = d['是否记录日志'] !== false;
-        document.getElementById('cfg_market_source').value = d['插件市场源'] || '';
-        var fate = d['FateArk接入点启动模式'] || {};
-        document.getElementById('cfg_fate_server').value = fate['服务器号'] || '';
-        document.getElementById('cfg_fate_password').value = fate['密码'] || '';
-        document.getElementById('cfg_fate_server_addr').value = fate['验证服务器地址(更换时记得更改fbtoken)'] || '';
-    }).catch(function(){ showToast('加载失败', 'error'); });
-}
-
-function saveLauncherConfig() {
-    fetch('/api/launcher/config').then(function(r){return r.json()}).then(function(current){
-        current['是否记录日志'] = document.getElementById('cfg_logging').checked;
-        current['插件市场源'] = document.getElementById('cfg_market_source').value.trim();
-        if (!current['FateArk接入点启动模式']) current['FateArk接入点启动模式'] = {};
-        current['FateArk接入点启动模式']['服务器号'] = parseInt(document.getElementById('cfg_fate_server').value) || 0;
-        current['FateArk接入点启动模式']['密码'] = document.getElementById('cfg_fate_password').value;
-        current['FateArk接入点启动模式']['验证服务器地址(更换时记得更改fbtoken)'] = document.getElementById('cfg_fate_server_addr').value.trim();
-        fetch('/api/launcher/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(current) })
-        .then(function(r){return r.json()}).then(function(d){
-            if(d.success) showToast('配置已保存（重启ToolDelta后生效）', 'success');
-            else showToast(d.error||'保存失败', 'error');
-        });
-    }).catch(function(){ showToast('加载失败', 'error'); });
-}
-
-function loadFbtoken() {
-    fetch('/api/fbtoken').then(function(r){return r.json()}).then(function(d){
-        document.getElementById('fbtokenInput').value = d.token || '';
-    }).catch(function(){});
-}
-
-function saveFbtoken() {
-    var token = document.getElementById('fbtokenInput').value.trim();
-    fetch('/api/fbtoken', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:token}) })
-    .then(function(r){return r.json()}).then(function(d){
-        if(d.success) showToast('fbtoken 已保存', 'success');
-        else showToast(d.error||'保存失败', 'error');
-    });
-}
-
-// Load about info
-fetch('/api/system/info').then(function(r){return r.json()}).then(function(d){
-    var el = function(id){return document.getElementById(id);};
-    if(el('aboutPython')) el('aboutPython').textContent = d.python_version || '-';
-    if(el('aboutPlatform')) el('aboutPlatform').textContent = d.platform || '-';
-    if(el('aboutTdDir')) el('aboutTdDir').textContent = d.tooldelta_dir || '-';
-    if(el('aboutPlugins')) el('aboutPlugins').textContent = (d.plugin_count||0) + ' (启用: '+(d.enabled_plugins||0)+')';
-}).catch(function(){});
-
-loadLauncherConfig();
-loadFbtoken();
-
-// 校验 URL 协议（仅允许 http/https）后再拼接，防止 CSS 注入
-// 纵深防御:encodeURI 不编码单引号/双引号/反斜杠,这里显式 replace
-// 防止 backgroundImage 表达式被构造注入(与 base.html/login.html 初始拼接一致)
-function safeWallpaperUrl(url) {
-    if (!url || typeof url !== 'string') return '';
-    if (!/^https?:\/\//i.test(url)) return '';
-    try { url = encodeURI(url); } catch(e) { return ''; }
-    url = url.replace(/['"\\]/g, encodeURIComponent);
-    return "url('" + url + "')";
-}
-
-function fetchWallpaper() {
-    var errEl = document.getElementById('wallpaperError');
-    errEl.style.display = 'none';
-    fetch('/api/settings/wallpaper/fetch', { method:'POST' })
-    .then(function(r){return r.json()})
-    .then(function(d){
-        if(d.success && d.data && d.data.url) {
-            var bg = safeWallpaperUrl(d.data.url);
-            if (bg) document.getElementById('wallpaperPreview').style.backgroundImage = bg;
-            if(window.TDWallpaper) TDWallpaper.lock(d.data.url);
-            showToast('壁纸已更换', 'success');
-        } else {
-            errEl.textContent = d.error || '获取壁纸失败，你可以手动输入图片URL';
-            errEl.style.display = 'block';
-            showToast(d.error||'获取壁纸失败', 'error');
-        }
-    })
-    .catch(function(){ showToast('请求失败', 'error'); });
-}
-
-function setManualWallpaper() {
-    var url = document.getElementById('manualWallpaperUrl').value.trim();
-    if (!url) { showToast('请输入图片URL', 'error'); return; }
-    fetch('/api/settings/wallpaper/fetch', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url:url}) })
-    .then(function(r){return r.json()})
-    .then(function(d){
-        if(d.success && d.data && d.data.url) {
-            var bg = safeWallpaperUrl(d.data.url);
-            if (bg) document.getElementById('wallpaperPreview').style.backgroundImage = bg;
-            if(window.TDWallpaper) TDWallpaper.lock(d.data.url);
-            document.getElementById('manualWallpaperUrl').value = '';
-            showToast('壁纸已设置', 'success');
-        } else {
-            var errEl = document.getElementById('wallpaperError');
-            errEl.textContent = d.error || '设置失败';
-            errEl.style.display = 'block';
-        }
-    })
-    .catch(function(){ showToast('请求失败', 'error'); });
-}
-
-function clearWallpaper() {
-    fetch('/api/settings/wallpaper/clear', { method:'POST' })
-    .then(function(r){return r.json()})
-    .then(function(d){
-        if(d.success) {
-            document.getElementById('wallpaperPreview').style.backgroundImage = '';
-            if(window.TDWallpaper) TDWallpaper.unlock();
-            showToast('壁纸已清除', 'success');
-        } else {
-            showToast('清除失败', 'error');
-        }
-    })
-    .catch(function(){ showToast('请求失败', 'error'); });
-}
-
-function changePassword() {
-    var oldPwEl = document.getElementById('oldPw');
-    var newPwEl = document.getElementById('newPw');
-    var newPw2El = document.getElementById('newPw2');
-    var oldPw = oldPwEl.value, newPw = newPwEl.value, newPw2 = newPw2El.value;
-    // 内联校验（参考 shadcn/ui Form / Linear 字段提示）：定位首个错误字段并聚焦
-    var firstErr = null;
-    if (!oldPw) { setFieldError(oldPwEl, '请输入当前密码'); firstErr = firstErr || oldPwEl; }
-    else setFieldError(oldPwEl, '');
-    if (!newPw) { setFieldError(newPwEl, '请输入新密码'); firstErr = firstErr || newPwEl; }
-    else if (newPw.length < 6) { setFieldError(newPwEl, '密码至少 6 位'); firstErr = firstErr || newPwEl; }
-    else setFieldError(newPwEl, '');
-    if (newPw && newPw !== newPw2) { setFieldError(newPw2El, '两次密码不一致'); firstErr = firstErr || newPw2El; }
-    else setFieldError(newPw2El, '');
-    if (firstErr) { firstErr.focus(); return; }
-    fetch('/api/change-password', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({old_password:oldPw, new_password:newPw}) })
-    .then(function(r){return r.json()})
-    .then(function(d){
-        if(d.success){
-            var warn = (d.data||{}).password_warning;
-            if (warn && warn.tips && warn.tips.length) {
-                showToast('密码已修改（提示: ' + warn.tips.join('; ') + '）', 'info');
-            } else {
-                showToast('密码已修改', 'success');
-            }
-            oldPwEl.value=''; newPwEl.value=''; newPw2El.value='';
-        }
-        else {
-            // 服务器拒绝时把错误归到当前密码字段（最常见原因）
-            setFieldError(oldPwEl, d.error||'修改失败');
-            oldPwEl.focus();
-        }
-    })
-    .catch(function(){ showToast('请求失败', 'error'); });
-}
-
-function confirmReset() {
-    // 合并原两步（showConfirm + 原生 prompt）为单步 showPrompt 模态，与 files/backup/commands 一致
-    // 第五个参数 'password' 让 input.type=password，避免密码明文显示被旁人窥视
-    showPrompt('请输入当前密码以确认重置面板', '输入当前密码', '', function(pw) {
-        if (!pw) return;
-        fetch('/api/reset-panel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw}) })
-        .then(function(r){return r.json()})
-        .then(function(d){
-            if(d.success){ showToast('面板已重置', 'success'); setTimeout(function(){ window.location.href='/setup'; }, 1500); }
-            else { showToast(d.error||'重置失败', 'error'); }
-        })
-        .catch(function(){ showToast('请求失败', 'error'); });
-    }, 'password');
-}
-
-function createUser() {
-    var uEl = document.getElementById('newUserName');
-    var pEl = document.getElementById('newUserPw');
-    var rEl = document.getElementById('newUserRole');
-    var u = uEl.value.trim();
-    var p = pEl.value;
-    var r = parseInt(rEl.value, 10);
-    if (isNaN(r)) r = 1; // 默认普通用户
-    // 内联校验：用户名/密码必填 + 长度限制
-    var firstErr = null;
-    if (!u) { setFieldError(uEl, '请输入用户名'); firstErr = firstErr || uEl; }
-    else if (u.length < 2) { setFieldError(uEl, '用户名至少 2 个字符'); firstErr = firstErr || uEl; }
-    else setFieldError(uEl, '');
-    if (!p) { setFieldError(pEl, '请输入密码'); firstErr = firstErr || pEl; }
-    else if (p.length < 6) { setFieldError(pEl, '密码至少 6 位'); firstErr = firstErr || pEl; }
-    else setFieldError(pEl, '');
-    if (firstErr) { firstErr.focus(); return; }
-    fetch('/api/users/create', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p, role:r}) })
-    .then(function(r){return r.json()})
-    .then(function(d){
-        if(d.success){
-            var warn = (d.data||{}).password_warning;
-            if (warn && warn.tips && warn.tips.length) {
-                showToast('用户已创建（密码提示: ' + warn.tips.join('; ') + '）', 'info');
-            } else {
-                showToast('用户已创建', 'success');
-            }
-            uEl.value=''; pEl.value=''; loadUsers();
-        }
-        else {
-            // 服务器报错通常与用户名重复有关
-            setFieldError(uEl, d.error||'创建失败');
-            uEl.focus();
-        }
-    })
-    .catch(function(){ showToast('请求失败', 'error'); });
-}
-
-function loadUsers() {
-    fetch('/api/users').then(function(r){return r.json()}).then(function(d){
-        if(!d.success) return;
-        var tbody = document.getElementById('userList');
-        if (!tbody) return;
-        tbody.innerHTML = '';
-        var current = {{ session.get("username","")|tojson }};
-        d.data.forEach(function(u) {
-            var tr = document.createElement('tr');
-            var roleLabel = u.role === 10 ? '管理员' : '普通用户';
-            // 用 textContent 安全填充各单元格，避免 username/login_at 注入 HTML
-            var c1 = document.createElement('td'); c1.style.padding='8px 10px'; c1.textContent = u.username || '';
-            var c2 = document.createElement('td'); c2.style.padding='8px 10px'; c2.textContent = roleLabel;
-            var c3 = document.createElement('td'); c3.style.padding='8px 10px'; c3.style.color='var(--ink-subtle)'; c3.style.fontSize='12px'; c3.textContent = u.login_at || '-';
-            tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3);
-            var td = document.createElement('td');
-            td.style.padding = '8px 10px';
-            if (u.username !== current) {
-                var del = document.createElement('button');
-                del.className = 'btn btn-sm btn-outline';
-                del.textContent = '删除';
-                del.onclick = function() { deleteUser(u.username); };
-                td.appendChild(del);
-            }
-            tr.appendChild(td);
-            tbody.appendChild(tr);
-        });
-    }).catch(function(){ /* 网络抖动忽略，下次轮询刷新 */ });
-}
-
-function deleteUser(username) {
-    showConfirm('确定删除用户 "'+username+'" 吗？', function(ok) {
-        if (!ok) return;
-        fetch('/api/users/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:username}) })
-        .then(function(r){return r.json()})
-        .then(function(d){
-            if(d.success){ showToast('用户已删除', 'success'); loadUsers(); }
-            else { showToast(d.error||'删除失败', 'error'); }
-        })
-        .catch(function(){ showToast('请求失败', 'error'); });
-    });
-}
-
-{% if session.get('role') == 10 %}
-loadUsers();
-{% endif %}
-
-// 实时校验：失焦时校验，输入时清除错误（参考 shadcn/ui Form 行为）
-(function() {
-    var newPwEl = document.getElementById('newPw');
-    var newPw2El = document.getElementById('newPw2');
-    if (newPw2El) {
-        newPw2El.addEventListener('blur', function() {
-            var n = newPwEl ? newPwEl.value : '';
-            if (this.value && n && this.value !== n) {
-                setFieldError(this, '两次密码不一致');
-            } else {
-                setFieldError(this, '');
-            }
-        });
-        // 输入时清除错误，让用户先输完再校验
-        newPw2El.addEventListener('input', function() {
-            if (this.getAttribute('aria-invalid') === 'true') setFieldError(this, '');
-        });
-    }
-    if (newPwEl) {
-        newPwEl.addEventListener('input', function() {
-            // 新密码变更后，若确认密码已填写且不一致，重新校验
-            if (newPw2El && newPw2El.value && this.value !== newPw2El.value) {
-                setFieldError(newPw2El, '两次密码不一致');
-            } else if (newPw2El) {
-                setFieldError(newPw2El, '');
-            }
-        });
-    }
-})();
+window.TDSettings = {
+    wallpaperUrl: {{ wallpaper_url|tojson }},
+    currentUser: {{ session.get("username","")|tojson }},
+    isAdmin: {{ 'true' if session.get('role') == 10 else 'false' }}
+};
 </script>
 {% endblock %}

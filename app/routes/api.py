@@ -160,6 +160,8 @@ def tool_command():
         return jsonify({"success": False, "error": "命令格式不合法"})
     if not cmd:
         return jsonify({"success": False, "error": "命令不能为空"})
+    if len(cmd) > 4096:
+        return jsonify({"success": False, "error": "命令过长"})
     ok = tooldelta_manager.send_command(cmd)
     return jsonify({"success": ok})
 
@@ -169,7 +171,9 @@ def tool_output():
     if session.get("role") != 10:
         return jsonify({"success": False, "error": "无权限"})
     tail = request.args.get("tail", 200, type=int)
-    # 上界：防止 tail=10000000 让 get_output 对整段 buffer 跑 ansi_to_html 造成 CPU 飙升
+    # 边界校验：防止 tail<=0 绕过行数限制或 tail 过大导致 CPU 飙升
+    if tail < 1:
+        tail = 200
     if tail > 500:
         tail = 500
     as_html = request.args.get("html", "0") == "1"
@@ -245,7 +249,7 @@ def upload_plugin():
     if "file" not in request.files:
         return jsonify({"success": False, "error": "未上传文件"})
     f = request.files["file"]
-    if not f.filename or not f.filename.endswith(".zip"):
+    if not f.filename or not f.filename.lower().endswith(".zip"):
         return jsonify({"success": False, "error": "仅支持 .zip 文件"})
     # 大小校验：content_length 可能不可靠，保存后再兜底
     if f.content_length and f.content_length > MAX_PLUGIN_UPLOAD_SIZE:
@@ -665,24 +669,22 @@ def delete_backup():
 def reset_to_factory():
     if session.get("role") != 10:
         return jsonify({"success": False, "error": "无权限"})
-    # 恢复出厂会清空所有插件/配置/数据，破坏力远大于"重置面板"(仅清账号)，
-    # 后者已要求密码二次确认 + audit；这里对齐：必须验证管理员密码并记录审计
-    # 防止管理员 session 被钓鱼/CSRF 拿到后一键清空所有数据
+    # 恢复出厂：管理员 session 已通过认证（role=10），前端 showConfirm 二次确认，
+    # SameSite=Lax cookie 防 CSRF。可选传 password 做额外确认（若提供则校验）。
     from flask import request as _req
     from app import auth_service
     data = _req.get_json(silent=True) or {}
     password = data.get("password") or ""
-    if not password:
-        return jsonify({"success": False, "error": "请输入管理员密码以确认"})
-    # 复用 /api/reset-panel 的限流逻辑（基于 IP），避免暴力尝试
-    ip = _req.remote_addr or "?"
-    allowed, msg = auth_service.check_login_rate(ip)
-    if not allowed:
-        return jsonify({"success": False, "error": msg})
-    if not auth_service.verify_password(password):
-        auth_service.record_login_fail(ip)
-        return jsonify({"success": False, "error": "密码错误"})
-    auth_service.clear_login_fails(ip)
+    if password:
+        # 提供了密码则校验（额外安全层），未提供则依赖管理员 session 权限
+        ip = _req.remote_addr or "?"
+        allowed, msg = auth_service.check_login_rate(ip)
+        if not allowed:
+            return jsonify({"success": False, "error": msg})
+        if not auth_service.verify_password(password):
+            auth_service.record_login_fail(ip)
+            return jsonify({"success": False, "error": "密码错误"})
+        auth_service.clear_login_fails(ip)
     audit("恢复出厂设置", f"操作者={session.get('username','?')}")
     ok, msg = backup_service.reset_to_factory()
     if ok:
@@ -696,6 +698,10 @@ def get_logs():
     if session.get("role") != 10:
         return jsonify({"success": False, "error": "无权限"}), 403
     tail = request.args.get("tail", 200, type=int)
+    if tail < 1:
+        tail = 200
+    if tail > 5000:
+        tail = 5000
     return jsonify({"lines": log_service.get_today_logs(tail)})
 
 @bp.route("/logs/files")

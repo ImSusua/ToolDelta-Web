@@ -20,7 +20,7 @@
             <span style="margin-left:auto;color:var(--ink-subtle);font-size:12px" id="fileCount"></span>
         </div>
         <div class="form-row" style="margin:0">
-            <input type="text" id="searchInput" class="form-control" placeholder="搜索文件..." inputmode="search" enterkeyhint="search" aria-label="搜索文件" onkeydown="if(event.key==='Enter')doSearch()">
+            <input type="text" id="searchInput" class="form-control" placeholder="搜索文件..." inputmode="search" enterkeyhint="search" aria-label="搜索文件">
             <button class="btn btn-sm btn-outline" onclick="doSearch()">搜索</button>
             <button class="btn btn-sm btn-outline" onclick="clearSearch()" id="clearSearchBtn" style="display:none">清除</button>
         </div>
@@ -192,15 +192,17 @@ function setSort(field) {
 function renderBreadcrumbs(current) {
     var el = document.getElementById('breadcrumbs');
     el.innerHTML = '';
-    if (!current) return;
+    if (!current || current === '.' || current === FILES_ROOT) return;
     // 上级目录按钮（移动端友好）
-    var parts = current.replace(/\\/g,'/').split('/');
-    var upBtn = document.createElement('button');
-    upBtn.className = 'up-btn';
-    upBtn.innerHTML = '↑ 上级';
-    upBtn.setAttribute('aria-label', '返回上级目录');
-    upBtn.onclick = function(){ navigateTo(parts.slice(0, -1).join('/')); };
-    el.appendChild(upBtn);
+    var parts = current.replace(/\\/g,'/').split('/').filter(function(p){ return p !== ''; });
+    if (parts.length > 0) {
+        var upBtn = document.createElement('button');
+        upBtn.className = 'up-btn';
+        upBtn.innerHTML = '↑ 上级';
+        upBtn.setAttribute('aria-label', '返回上级目录');
+        upBtn.onclick = function(){ navigateTo(parts.slice(0, -1).join('/')); };
+        el.appendChild(upBtn);
+    }
     parts.forEach(function(p, i) {
         var sep = document.createElement('span');
         sep.textContent = '/';
@@ -292,8 +294,14 @@ function renderFiles(entries) {
         mcBtn.className = 'btn btn-sm btn-outline';
         mcBtn.textContent = '移动';
         mcBtn.style.marginRight = '4px';
-        mcBtn.onclick = function(){ showMoveCopy(e.path, e.is_dir); };
+        mcBtn.onclick = function(){ showMoveCopy(e.path, e.is_dir, 'move'); };
         td.appendChild(mcBtn);
+        var cpBtn = document.createElement('button');
+        cpBtn.className = 'btn btn-sm btn-outline';
+        cpBtn.textContent = '复制';
+        cpBtn.style.marginRight = '4px';
+        cpBtn.onclick = function(){ showMoveCopy(e.path, e.is_dir, 'copy'); };
+        td.appendChild(cpBtn);
         var delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-outline';
         delBtn.textContent = '删除';
@@ -401,17 +409,38 @@ function uploadFiles(files) {
 }
 
 function deleteItem(path, isDir) {
+    var name = path.split('/').pop().split('\\').pop();
     var label = isDir ? '文件夹' : '文件';
-    showConfirm('确定删除' + label + ' "' + path.split('/').pop().split('\\').pop() + '" 吗？', function(ok) {
-        if (!ok) return;
-        fetch('/api/files/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:path}) })
-        .then(function(r){return r.json()})
-        .then(function(d){
-            if(d.success){ showToast('已删除', 'success'); loadFiles(); }
-            else { showToast(d.error||'删除失败', 'error'); }
-        })
-        .catch(function(){ showToast('删除请求失败', 'error'); });
-    });
+    function doConfirm(countInfo) {
+        var msg = '确定删除' + label + ' "' + name + '" 吗？';
+        if (countInfo && countInfo.total > 0) {
+            var parts = [];
+            if (countInfo.dirs > 0) parts.push(countInfo.dirs + ' 个子文件夹');
+            if (countInfo.files > 0) parts.push(countInfo.files + ' 个文件');
+            if (parts.length > 0) msg += '（该文件夹内包含 ' + parts.join('、') + '）';
+        }
+        showConfirm(msg, function(ok) {
+            if (!ok) return;
+            fetch('/api/files/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:path}) })
+            .then(function(r){return r.json()})
+            .then(function(d){
+                if(d.success){ showToast('已删除', 'success'); loadFiles(); }
+                else { showToast(d.error||'删除失败', 'error'); }
+            })
+            .catch(function(){ showToast('删除请求失败', 'error'); });
+        }, true);
+    }
+    if (isDir) {
+        fetch('/api/files/count?path=' + encodeURIComponent(path))
+            .then(function(r){return r.json()})
+            .then(function(d){
+                if (d.success) doConfirm(d.data);
+                else doConfirm(null);
+            })
+            .catch(function(){ doConfirm(null); });
+    } else {
+        doConfirm(null);
+    }
 }
 
 function renameItem(path) {
@@ -432,14 +461,15 @@ var MOVE_COPY_PATH = '';
 var MOVE_COPY_IS_DIR = false;
 var MOVE_COPY_MODE = '';
 
-function showMoveCopy(path, isDir) {
+function showMoveCopy(path, isDir, mode) {
     MOVE_COPY_PATH = path;
     MOVE_COPY_IS_DIR = isDir;
-    document.getElementById('moveCopyTitle').textContent = '移动';
+    MOVE_COPY_MODE = mode || 'move';
+    var isCopy = MOVE_COPY_MODE === 'copy';
+    document.getElementById('moveCopyTitle').textContent = isCopy ? '复制' : '移动';
     document.getElementById('moveCopyDesc').textContent = (isDir ? '文件夹' : '文件') + ': ' + path.split('/').pop().split('\\').pop();
     document.getElementById('moveCopyPath').value = '';
-    document.getElementById('moveCopyConfirmBtn').textContent = '移动';
-    MOVE_COPY_MODE = 'move';
+    document.getElementById('moveCopyConfirmBtn').textContent = isCopy ? '复制' : '移动';
     _openModal('moveCopyModal');
 }
 
@@ -538,6 +568,25 @@ document.addEventListener('DOMContentLoaded', function(){
             if (saved) { searchEl.value = saved; /* 不自动触发搜索，避免误激活 */ }
             searchEl.addEventListener('input', function(){ tdPref.set('files', 'search', searchEl.value); });
         }
+    }
+    // 搜索防抖（400ms）
+    var _filesSearchTimer = null;
+    var searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            if (_filesSearchTimer) clearTimeout(_filesSearchTimer);
+            _filesSearchTimer = setTimeout(function() {
+                var q = searchInput.value.trim();
+                if (q) doSearch();
+                else if (IS_SEARCH) clearSearch();
+            }, 400);
+        });
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                if (_filesSearchTimer) clearTimeout(_filesSearchTimer);
+                doSearch();
+            }
+        });
     }
     // 恢复排序方向指示符
     var sortIcon = document.getElementById('sort' + SORT_BY.charAt(0).toUpperCase() + SORT_BY.slice(1));

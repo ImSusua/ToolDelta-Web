@@ -92,3 +92,13 @@ def watchdog_disable():
     watchdog_service.disable()
     _audit("禁用看门狗", "-")
     return jsonify({"success": True})
+
+
+@bp.route("/api/watchdog/check", methods=["POST"])
+def watchdog_check():
+    err = _admin_required()
+    if err:
+        return err
+    watchdog_service.check_now()
+    _audit("立即检查看门狗", "-")
+    return jsonify({"success": True})

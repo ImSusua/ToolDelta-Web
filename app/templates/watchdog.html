@@ -2,8 +2,6 @@
 {% set active_page = "watchdog" %}
 {% block content %}
 <style>
-/* 看门狗状态卡片视觉化（tag-warning 全局缺失，在此页内补齐） */
-.tag-warning { background: rgba(245, 181, 10, 0.15); color: var(--warning, #f5b50a); }
 .watchdog-status-card {
     padding: 14px 16px; border-radius: var(--r-md, 10px);
     border: 1px solid var(--border, rgba(0,0,0,0.08));
@@ -12,10 +10,15 @@
 .watchdog-status-card[data-state="healthy"] { border-color: rgba(39,166,68,0.35); }
 .watchdog-status-card[data-state="degraded"] { border-color: rgba(245,181,10,0.45); }
 .watchdog-status-card[data-state="stopped"] { border-color: rgba(229,72,77,0.35); }
+.btn-group-toggle { display: inline-flex; gap: 0; }
+.btn-group-toggle .btn { border-radius: 0; }
+.btn-group-toggle .btn:first-child { border-radius: var(--r-md) 0 0 var(--r-md); }
+.btn-group-toggle .btn:last-child { border-radius: 0 var(--r-md) var(--r-md) 0; }
+.btn-group-toggle .btn.active { box-shadow: inset 0 0 0 1px currentColor; }
 </style>
 <div class="page-header">
     <h1>看门狗</h1>
-    <div>
+    <div class="btn-group-toggle">
         <button class="btn btn-primary" id="enableWatchdogBtn" onclick="enableWatchdog(this)">启用</button>
         <button class="btn btn-outline" id="disableWatchdogBtn" onclick="disableWatchdog(this)">禁用</button>
     </div>
@@ -58,9 +61,10 @@
 </div>
 
 <div class="card">
-    <h2>运行状态</h2>
-    <!-- 状态区不再整体 aria-live，避免每 3s 全量重写触发屏幕阅读器狂播；
-         仅独立的 brief 容器在健康状态变化时播报 -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="margin-bottom:0">运行状态</h2>
+        <button class="btn btn-outline btn-sm" id="checkNowBtn" onclick="checkNow(this)">立即检查</button>
+    </div>
     <div id="statusArea" class="status-area">
         <div class="loading-text">加载中...</div>
     </div>

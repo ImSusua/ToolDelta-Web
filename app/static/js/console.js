@@ -52,22 +52,80 @@ function _detectLogLevel(text) {
     return '';
 }
 
+// ─── ANSI 样式白名单：仅保留安全的 CSS 属性 ───
+var _ALLOWED_STYLE_PROPS = ['color', 'font-weight', 'text-decoration', 'background-color'];
+function _sanitizeStyle(styleStr) {
+    if (!styleStr) return '';
+    var safe = [];
+    var declarations = styleStr.split(';');
+    for (var i = 0; i < declarations.length; i++) {
+        var decl = declarations[i].trim();
+        if (!decl) continue;
+        var colonIdx = decl.indexOf(':');
+        if (colonIdx === -1) continue;
+        var prop = decl.slice(0, colonIdx).trim().toLowerCase();
+        var value = decl.slice(colonIdx + 1).trim();
+        if (_ALLOWED_STYLE_PROPS.indexOf(prop) !== -1) {
+            // 额外检查 value 中不包含危险内容
+            if (!/expression\(|url\(|javascript:|@import|behavior/i.test(value)) {
+                safe.push(prop + ': ' + value);
+            }
+        }
+    }
+    return safe.join('; ');
+}
+
+// ─── 搜索高亮：用 mark 标签包裹匹配文本 ───
+function _highlightText(node, query) {
+    if (!query || !node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+        var text = node.textContent;
+        var lowerText = text.toLowerCase();
+        var idx = lowerText.indexOf(query);
+        if (idx === -1) return;
+        var frag = document.createDocumentFragment();
+        var lastIdx = 0;
+        while (idx !== -1) {
+            if (idx > lastIdx) {
+                frag.appendChild(document.createTextNode(text.slice(lastIdx, idx)));
+            }
+            var mark = document.createElement('mark');
+            mark.textContent = text.slice(idx, idx + query.length);
+            frag.appendChild(mark);
+            lastIdx = idx + query.length;
+            idx = lowerText.indexOf(query, lastIdx);
+        }
+        if (lastIdx < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+        }
+        node.parentNode.replaceChild(frag, node);
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+        // 跳过 mark 标签自身避免无限递归，跳过时间戳
+        if (node.tagName === 'MARK' || node.classList.contains('c-ts') || node.classList.contains('c-ln')) return;
+        var children = Array.prototype.slice.call(node.childNodes);
+        for (var i = 0; i < children.length; i++) {
+            _highlightText(children[i], query);
+        }
+    }
+}
+
+function _clearHighlights(line) {
+    if (!line) return;
+    var marks = line.querySelectorAll('mark');
+    for (var i = marks.length - 1; i >= 0; i--) {
+        var mark = marks[i];
+        var parent = mark.parentNode;
+        while (mark.firstChild) {
+            parent.insertBefore(mark.firstChild, mark);
+        }
+        parent.removeChild(mark);
+    }
+    // 合并相邻文本节点
+    line.normalize();
+}
+
 function appendLine(html) {
     if (!body) return;
-    // XSS 防护:仅采用 DOMParser 白名单(第二道防线),不再做正则黑名单预处理。
-    // 关键修复:旧实现先用正则黑名单移除 <script>/<img onerror>/on*=/javascript:/data: 等,
-    // 再交给 DOMParser 白名单。但正则黑名单存在两类问题:
-    //   1) 安全性:正则可被 HTML 混淆绕过(如 <scr<script>ipt> 经内层移除后重组为 <script>,
-    //      <img/onerror=...> 用 / 分隔属性绕过 [^>]* 限定,<svg/onload> 同理)。
-    //      保留黑名单会给人以"已过滤"的错觉,实际仍可绕过 → 危险的虚假安全感。
-    //   2) 正确性:黑名单会破坏合法日志内容(如日志中字面出现 "javascript:" / "data: xxx"
-    //      / "onclick" 单词等会被替换为 "blocked:",扭曲用户实际看到的输出)。
-    // DOMParser 白名单已完整覆盖黑名单的所有目标且更严格:
-    //   - <script>/<iframe>/<object>/<embed>/<svg>/<img> 等所有非 <span> 标签被 unwrap(标签删除,文本保留);
-    //   - 所有 on* 事件属性被 removeAttribute;
-    //   - style/id 被移除(防 CSS 注入与锚点定位);
-    //   - href/src/xlink:href 中的 javascript: 与 data: URI 被移除。
-    // 浏览器 HTML 解析器处理所有混淆/编码变体,比正则更可靠。
     var safe = html || '';
     // 暂停滚动模式下：不判断 atBottom，强制不滚动到底部
     var atBottom = _pauseScroll ? false : (body.scrollHeight - body.scrollTop - body.clientHeight < 50);
@@ -79,19 +137,23 @@ function appendLine(html) {
     var tags = root.querySelectorAll('*');
     for (var i = tags.length - 1; i >= 0; i--) {
         var tag = tags[i];
-        // 移除所有 on* 事件属性与可疑 href/src/style，防止 DOMParser 仍残留的事件句柄
-        // M1 修复:style 属性此前未剥离,XSS 后可注入任意 CSS 构造全屏覆盖层(点击劫持)
-        // 或通过 background:url(http://attacker/...) 触发外部网络请求(数据外泄旁路)
-        // ansi_to_html 只生成 <span style="color:...">,但保险起见这里彻底移除 style,
-        // 颜色由 .c-* class 控制(console.css 已定义基础16色映射)
+        // 移除所有 on* 事件属性与可疑 href/src，保留白名单内的 style 属性
         var attrs = tag.attributes;
         for (var j = attrs.length - 1; j >= 0; j--) {
             var an = attrs[j].name.toLowerCase();
             if (an.indexOf('on') === 0) {
                 tag.removeAttribute(attrs[j].name);
-            } else if (an === 'style' || an === 'id') {
-                // style 可被构造 CSS 注入,id 可被锚点定位/选择器命中
+            } else if (an === 'id') {
+                // id 可被锚点定位/选择器命中，移除
                 tag.removeAttribute(attrs[j].name);
+            } else if (an === 'style') {
+                // 白名单过滤样式，而非完全移除
+                var filteredStyle = _sanitizeStyle(attrs[j].value);
+                if (filteredStyle) {
+                    tag.setAttribute('style', filteredStyle);
+                } else {
+                    tag.removeAttribute(attrs[j].name);
+                }
             } else if (an === 'href' || an === 'src' || an === 'xlink:href') {
                 var av = (attrs[j].value || '').trim();
                 if (/^\s*(javascript|data)\s*:/i.test(av)) {
@@ -120,12 +182,21 @@ function appendLine(html) {
     // 日志级别着色：仅在外层 div 加级别类，不影响内层 ANSI 着色
     var lvl = _detectLogLevel(div.textContent || '');
     if (lvl) div.classList.add(lvl);
+    // 应用日志级别过滤
+    if (_levelFilter && lvl && lvl !== _levelFilter) {
+        div.classList.add('is-level-filtered');
+    }
     // 应用当前过滤状态（避免批量插入后再回流）
+    var isFilteredOut = false;
     if (_filterQuery) {
         // 排除时间戳文本：否则输入纯数字（如 "30"）会匹配所有行的时间戳 HH:MM:SS.mmm
         var text = _lineTextWithoutTs(div);
         if (text.toLowerCase().indexOf(_filterQuery) === -1) {
             div.classList.add('is-filtered-out');
+            isFilteredOut = true;
+        } else {
+            // 匹配时添加高亮
+            _highlightText(div, _filterQuery);
         }
     }
     // 批量插入缓冲：高频输出（如日志刷屏）时合并到下一帧统一插入，避免逐行重排卡顿
@@ -152,6 +223,8 @@ function _flushBatch() {
         var removeCount = Math.min(50, body.children.length - 1000);
         for (var i = 0; i < removeCount; i++) body.removeChild(body.firstChild);
     }
+    // 更新行号（批量追加后重新编号）
+    if (_showLineNumbers) _updateLineNumbers();
     if (info.atBottom) {
         body.scrollTop = body.scrollHeight;
     } else {
@@ -163,12 +236,13 @@ function _flushBatch() {
     }
 }
 
-/* ─── 工具栏：暂停滚动 / 时间戳 / 搜索过滤 ─────────────────── */
+/* ─── 工具栏：暂停滚动 / 时间戳 / 搜索过滤 / 级别筛选 ─────────────────── */
 
 var _pauseScroll = false;       // 暂停自动滚动到最新
 var _showTimestamps = false;    // 显示时间戳
 var _showLineNumbers = false;   // 显示行号
 var _filterQuery = '';          // 当前过滤关键词（小写）
+var _levelFilter = '';          // 日志级别筛选
 
 // 格式化时间戳为 HH:MM:SS.mmm
 function _formatTs(d) {
@@ -214,7 +288,7 @@ function toggleTimestamps() {
     if (body) body.classList.toggle('show-ts', _showTimestamps);
 }
 
-// 行号开关：开启后在每行左侧显示行号（CSS counter 实现，自动随行增减重编号）
+// 行号开关：开启后在每行左侧显示行号（DOM 实现，支持点击复制）
 function toggleLineNumbers() {
     _showLineNumbers = !_showLineNumbers;
     var btn = document.getElementById('lineNumberBtn');
@@ -223,6 +297,113 @@ function toggleLineNumbers() {
         btn.setAttribute('aria-label', _showLineNumbers ? '隐藏行号' : '显示行号');
     }
     if (body) body.classList.toggle('show-lines', _showLineNumbers);
+    _updateLineNumbers();
+}
+
+// 更新行号（DOM 方式，支持点击复制）
+function _updateLineNumbers() {
+    if (!body) return;
+    var lines = body.children;
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var existingLn = line.querySelector('.c-ln');
+        if (_showLineNumbers) {
+            if (!existingLn) {
+                var lnSpan = document.createElement('span');
+                lnSpan.className = 'c-ln';
+                lnSpan.textContent = (i + 1);
+                lnSpan.title = '点击复制该行';
+                lnSpan.addEventListener('click', (function (lineEl) {
+                    return function () { _copyLine(lineEl); };
+                })(line));
+                line.insertBefore(lnSpan, line.firstChild);
+            } else {
+                existingLn.textContent = (i + 1);
+            }
+        } else {
+            if (existingLn) existingLn.remove();
+        }
+    }
+}
+
+// 复制单行内容
+function _copyLine(lineEl) {
+    if (!lineEl) return;
+    var clone = lineEl.cloneNode(true);
+    // 移除时间戳和行号
+    var ts = clone.querySelector('.c-ts');
+    if (ts) ts.remove();
+    var ln = clone.querySelector('.c-ln');
+    if (ln) ln.remove();
+    var text = clone.textContent || '';
+    _copyToClipboard(text.trim(), '已复制该行');
+}
+
+// 通用复制函数
+function _copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+            if (typeof showToast === 'function' && successMsg) showToast(successMsg, 'success');
+        }).catch(function () {
+            _fallbackCopy(text, successMsg);
+        });
+    } else {
+        _fallbackCopy(text, successMsg);
+    }
+}
+
+function _fallbackCopy(text, successMsg) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        if (typeof showToast === 'function' && successMsg) showToast(successMsg, 'success');
+    } catch (e) {
+        if (typeof showToast === 'function') showToast('复制失败', 'error');
+    }
+    document.body.removeChild(ta);
+}
+
+// 日志级别筛选切换
+function toggleLevelFilter(level) {
+    _levelFilter = (_levelFilter === level) ? '' : level;
+    _applyLevelFilter();
+    _updateLevelFilterButtons();
+}
+
+function _applyLevelFilter() {
+    if (!body) return;
+    var children = body.children;
+    for (var i = 0; i < children.length; i++) {
+        var line = children[i];
+        var isLevelMatch = true;
+        if (_levelFilter) {
+            var lvl = '';
+            if (line.classList.contains('log-error')) lvl = 'log-error';
+            else if (line.classList.contains('log-warn')) lvl = 'log-warn';
+            else if (line.classList.contains('log-debug')) lvl = 'log-debug';
+            else if (line.classList.contains('log-info')) lvl = 'log-info';
+            // 如果没有级别类，默认显示（不过滤普通行）
+            if (lvl && lvl !== _levelFilter) {
+                isLevelMatch = false;
+            }
+        }
+        line.classList.toggle('is-level-filtered', !isLevelMatch);
+    }
+}
+
+function _updateLevelFilterButtons() {
+    var levels = ['log-info', 'log-warn', 'log-error', 'log-debug'];
+    for (var i = 0; i < levels.length; i++) {
+        var btn = document.getElementById('levelBtn_' + levels[i]);
+        if (btn) {
+            btn.setAttribute('aria-pressed', _levelFilter === levels[i] ? 'true' : 'false');
+        }
+    }
 }
 
 // 搜索过滤：仅显示包含关键词的行（实时，300ms 防抖）
@@ -251,34 +432,41 @@ function _setupSearchFilter() {
     });
 }
 
-// 应用过滤：遍历所有行，隐藏不匹配的
+// 应用过滤：遍历所有行，隐藏不匹配的，并添加高亮
 function _applyFilter() {
     if (!body) return;
     var children = body.children;
     for (var i = 0; i < children.length; i++) {
         var line = children[i];
+        // 先清除旧高亮
+        _clearHighlights(line);
         if (!_filterQuery) {
             line.classList.remove('is-filtered-out');
         } else {
-            // 排除时间戳文本：避免输入纯数字匹配所有行的时间戳 HH:MM:SS.mmm
+            // 排除时间戳和行号文本
             var text = _lineTextWithoutTs(line).toLowerCase();
-            line.classList.toggle('is-filtered-out', text.indexOf(_filterQuery) === -1);
+            var match = text.indexOf(_filterQuery) !== -1;
+            line.classList.toggle('is-filtered-out', !match);
+            if (match) {
+                _highlightText(line, _filterQuery);
+            }
         }
     }
+    // 更新行号
+    if (_showLineNumbers) _updateLineNumbers();
     // 过滤后跳到底部（让用户看到最近的匹配）
     if (_filterQuery && !_pauseScroll) {
         body.scrollTop = body.scrollHeight;
     }
 }
 
-// 取一行的文本内容，但排除时间戳 span 的文本（用于过滤匹配，避免误命中）
+// 取一行的文本内容，但排除时间戳和行号 span 的文本（用于过滤匹配，避免误命中）
 function _lineTextWithoutTs(line) {
-    var ts = line.querySelector('.c-ts');
-    if (!ts) return line.textContent || '';
-    // 临时 clone 后移除时间戳节点再取 textContent
     var clone = line.cloneNode(true);
     var tsClone = clone.querySelector('.c-ts');
     if (tsClone) tsClone.remove();
+    var lnClone = clone.querySelector('.c-ln');
+    if (lnClone) lnClone.remove();
     return clone.textContent || '';
 }
 
@@ -342,10 +530,6 @@ function sendCommand(cmd) {
 function _flushCmdQueue() {
     if (_sendingCmd) return;
     if (_cmdQueue.length === 0) return;
-    // 再次检查 socket.connected：用户首次发送时已校验过，但 flush 链在 100ms setTimeout 中
-    // 逐条消费，期间 socket 可能已断开。若不检查，emit 会静默失败，命令从队列 shift 出但
-    // 未到达服务端，造成命令丢失。检测到断连时 unshift 回队列并停止 flush，由 socket.on('connect')
-    // 恢复连接时重新触发 flush。
     if (!socket.connected) {
         _sendingCmd = false;
         return;
@@ -402,6 +586,7 @@ if (body) {
         .then(function (d) {
             body.innerHTML = '';
             if (d.lines && d.lines.length) d.lines.forEach(appendLine);
+            if (_showLineNumbers) _updateLineNumbers();
         })
         .catch(function () { body.innerHTML = '<div class="c-err">⚠ 获取历史输出失败，请刷新重试</div>'; });
 }
@@ -423,7 +608,6 @@ fetch('/api/commands')
     })
     .catch(function () {
         cmdLibrary = [];
-        // 补全库加载失败时在控制台提示一次（不阻塞使用）
         appendLine('<span class="c-hint">ℹ 命令补全库加载失败，Tab 补全不可用</span>');
     });
 
@@ -460,8 +644,6 @@ socket.on('disconnect', function () {
     if (sendBtn) sendBtn.disabled = true;
 });
 // 移动端弱网：重连尝试提示（带尝试次数显示）
-// 弱网下 connect_error 高频触发，对 statusEl 的 DOM 更新做节流，避免每秒多次重排
-// 参考 Pterodactyl v1.12.0：对不可恢复错误（认证失败 401/403）停止重连，避免无限重连耗电
 var _reconnShown = false;
 var _reconnAttempts = 0;
 var _reconnRaf = null;
@@ -469,14 +651,13 @@ var _reconnFatal = false; // 不可恢复错误标志：认证失效后不再重
 socket.on('connect_error', function (err) {
     // 认证类错误：token 过期/会话失效，重连无意义，直接停止并提示重新登录
     var desc = (err && (err.description || err.message)) || '';
-    // socket.io polling 401/403 时,HTTP 状态码位于 err.context.xhr.status
     var status = (err && err.context && err.context.xhr && err.context.xhr.status)
               || (err && err.status) || 0;
     if (status === 401 || status === 403 || /auth|forbidden|unauthorized|401|403/i.test(desc)) {
         if (!_reconnFatal) {
             _reconnFatal = true;
-            socket.io.opts.reconnection = false; // 关闭自动重连
-            if (socket.io.conn) socket.io.conn.close(); // 中止进行中的重连
+            socket.io.opts.reconnection = false;
+            if (socket.io.conn) socket.io.conn.close();
             if (statusEl) { statusEl.textContent = '认证失效'; statusEl.className = 'status-conn disconnected'; }
             showToast('登录已失效，请刷新页面重新登录', 'error');
         }
@@ -487,7 +668,6 @@ socket.on('connect_error', function (err) {
         _reconnShown = true;
         showToast('连接中…若持续失败请检查网络', 'warning');
     }
-    // rAF 合并：同一帧内多次 connect_error 只更新一次 DOM
     if (_reconnRaf || !statusEl) return;
     _reconnRaf = requestAnimationFrame(function () {
         _reconnRaf = null;
@@ -502,7 +682,6 @@ socket.on('reconnect', function () {
 });
 // 重连 20 次仍失败：停止自动重连，提供「重试」按钮供用户手动恢复
 socket.io.on('reconnect_failed', function () {
-    // 进程仍在运行但实时通道彻底失败：明确告知用户两种状态分离，避免误判
     if (window._tdProcessRunning) {
         if (statusEl) statusEl.innerHTML = '实时通道失败（进程运行中） <button class="btn btn-sm btn-outline" onclick="manualReconnect()">重试</button>';
         if (input) input.placeholder = '实时通道失败，命令暂不可发送，点击重试恢复...';
@@ -514,7 +693,6 @@ socket.io.on('reconnect_failed', function () {
     if (sendBtn) sendBtn.disabled = true;
 });
 function manualReconnect() {
-    // 重置所有重连状态,避免上次失败状态残留导致重试按钮立即被冲掉、计数器累加误导
     _reconnAttempts = 0;
     _reconnShown = false;
     _reconnFatal = false;
@@ -555,11 +733,14 @@ if (body) {
         if (_scrollRaf) return;
         _scrollRaf = requestAnimationFrame(function () {
             _scrollRaf = null;
-            if (_isAtBottom()) {
+            var atBottom = _isAtBottom();
+            if (atBottom) {
                 _newMsgCount = 0;
                 if (_pill) _pill.style.display = 'none';
                 if (_scrollBtn) _scrollBtn.style.display = 'none';
                 if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
+                // 修复：手动滚动到底部时，如果是暂停状态，不自动恢复；
+                // 但需要隐藏新消息提示，因为已经在底部了
             } else {
                 // 用户主动向上滚动：显示工具栏按钮 + 右下角浮动「回到最新」
                 if (_scrollBtn) _scrollBtn.style.display = '';
@@ -570,53 +751,45 @@ if (body) {
 }
 function scrollToBottom() {
     if (!body) return;
+    // 点击「回到最新」时同时恢复自动滚动（用户明确表示要跟随最新）
+    _pauseScroll = false;
+    var pauseBtn = document.getElementById('pauseScrollBtn');
+    var bar = document.querySelector('.console-bar');
+    if (pauseBtn) {
+        pauseBtn.setAttribute('aria-pressed', 'false');
+        var lbl = pauseBtn.querySelector('.lbl');
+        if (lbl) lbl.textContent = '暂停';
+        pauseBtn.setAttribute('aria-label', '暂停自动滚动');
+    }
+    if (bar) bar.classList.remove('is-paused');
+    
     body.scrollTop = body.scrollHeight;
     _newMsgCount = 0;
     if (_pill) _pill.style.display = 'none';
+    if (_scrollBtn) _scrollBtn.style.display = 'none';
     if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
 }
 if (_pill) _pill.addEventListener('click', scrollToBottom);
 
 function copyAllConsole() {
     if (!body) return;
-    // 仅遍历元素子节点（跳过空白文本节点），避免每行多出空行
     var text = '';
     for (var i = 0; i < body.children.length; i++) {
-        // 排除时间戳节点文本：未开启时间戳显示时，.c-ts 仍 DOM 存在（仅 CSS 隐藏），
-        // 直接读 textContent 会包含 HH:MM:SS.mmm，导致复制内容与用户所见不一致
         var line = body.children[i];
-        var ts = line.querySelector('.c-ts');
-        if (ts) {
-            // 临时 clone 后移除时间戳节点
-            var clone = line.cloneNode(true);
-            var tsClone = clone.querySelector('.c-ts');
-            if (tsClone) tsClone.remove();
-            text += clone.textContent + '\n';
-        } else {
-            text += line.textContent + '\n';
-        }
+        // 跳过被过滤掉的行
+        if (line.classList.contains('is-filtered-out') || line.classList.contains('is-level-filtered')) continue;
+        var clone = line.cloneNode(true);
+        var ts = clone.querySelector('.c-ts');
+        if (ts) ts.remove();
+        var ln = clone.querySelector('.c-ln');
+        if (ln) ln.remove();
+        text += clone.textContent + '\n';
     }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () {
-            showToast('已复制全部输出', 'success');
-        }).catch(function () { showToast('复制失败', 'error'); });
-    } else {
-        // 回退：使用临时 textarea（旧浏览器 / 非 https 环境）
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); showToast('已复制全部输出', 'success'); }
-        catch (e) { showToast('复制失败', 'error'); }
-        document.body.removeChild(ta);
-    }
+    _copyToClipboard(text, '已复制全部输出');
 }
 
 if (input) {
     input.addEventListener('keydown', function (e) {
-        // 兼容 Android 键盘：部分输入法回车键 e.key 为 'Enter' 但部分为 keyCode 13
         if (e.key === 'Enter' || e.keyCode === 13) {
             var cmd = input.value;
             input.value = '';
@@ -640,9 +813,6 @@ if (input) {
             complete();
         }
     });
-    // 仅在非触屏设备聚焦：移动端自动 focus 会触发虚拟键盘弹出，遮挡控制台输出
-    // 用户体验差，需手动收起。检测方式：粗略判断是否有 coarse pointer（matchMedia），
-    // 不支持 matchMedia 的旧浏览器回退到不聚焦（安全选择）
     var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     if (!isCoarse) {
         input.focus();
@@ -650,7 +820,6 @@ if (input) {
 }
 
 function escapeHtml(s) {
-    // 同时转义 & < > " ' 以兼容元素内容与属性上下文
     return (s || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -658,7 +827,7 @@ function escapeHtml(s) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
-// 渲染收藏的命令为快捷发送 chips（点击即发送到控制台）
+// 渲染收藏的命令为快捷发送 chips
 function renderFavs() {
     var el = document.getElementById('favStrip');
     if (!el) return;
@@ -670,7 +839,6 @@ function renderFavs() {
                 el.innerHTML = '<span class="fav-empty">暂无收藏命令 · 在「命令参考」页点 ★ 即可收藏，这里一键发送</span>';
                 return;
             }
-            // 通过 data-cmd 属性承载命令 + 事件委托，避免 onclick 字符串拼接导致的 XSS
             el.innerHTML = cmds.map(function (c) {
                 return '<button type="button" class="fav-chip" data-cmd="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
             }).join('');
@@ -697,19 +865,17 @@ function renderFavs() {
 function clearConsole() {
     if (!body) return;
     body.innerHTML = '';
-    // 清空待刷新的批处理缓冲：高频输出期间点清屏，未刷新的行会再次冒出
     _batchBuffer = null;
     _batchPending = null;
     _outputBuffer = [];
     if (_outputTimer) { clearTimeout(_outputTimer); _outputTimer = null; }
-    // 重置未读消息计数与提示按钮，避免清屏后 pill 残留"N 条新"
     _newMsgCount = 0;
     if (_pill) _pill.style.display = 'none';
     if (_scrollBtn) _scrollBtn.style.display = 'none';
     if (_scrollFloatBtn) _scrollFloatBtn.style.display = 'none';
 }
 
-/* ─── 命令历史下拉（最近 10 条，选择填入输入框） ─────────────── */
+/* ─── 命令历史下拉 ─────────────── */
 function toggleCmdHistory() {
     var dd = document.getElementById('cmdHistoryDropdown');
     if (!dd) return;
@@ -732,7 +898,6 @@ function _renderCmdHistory() {
         dd.innerHTML = '<div class="cmd-history-empty">暂无历史命令</div>';
         return;
     }
-    // 最近 10 条，倒序展示（最新在最上）
     var recent = _cmdHistory.slice(-10).reverse();
     var html = '';
     for (var i = 0; i < recent.length; i++) {
@@ -749,7 +914,6 @@ function _renderCmdHistory() {
         })(items[j], recent[j]);
     }
 }
-// 点击外部关闭下拉
 document.addEventListener('click', function (e) {
     var dd = document.getElementById('cmdHistoryDropdown');
     var btn = document.getElementById('cmdHistoryBtn');

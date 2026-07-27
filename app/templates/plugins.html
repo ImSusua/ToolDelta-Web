@@ -7,7 +7,7 @@
 </div>
 
 <div class="search-bar">
-    <input type="text" id="pluginSearch" placeholder="搜索插件名..." inputmode="search" enterkeyhint="search" oninput="renderPlugins()" aria-label="搜索插件">
+    <input type="text" id="pluginSearch" placeholder="搜索插件名..." inputmode="search" enterkeyhint="search" aria-label="搜索插件">
     <select id="pluginFilter" onchange="renderPlugins()" aria-label="筛选插件状态">
         <option value="all">全部</option>
         <option value="enabled">已启用</option>
@@ -30,7 +30,11 @@
         <div class="tab-content active" id="uploadTab" role="tabpanel" aria-labelledby="tabUpload">
             <div class="form-group">
                 <label for="pluginZip">上传插件压缩包 (.zip)</label>
-                <input type="file" id="pluginZip" accept=".zip" class="form-control">
+                <div id="pluginDropZone" class="plugin-drop-zone">
+                    <div class="plugin-drop-hint" id="pluginDropHint">松开鼠标以上传插件</div>
+                    <input type="file" id="pluginZip" accept=".zip" class="form-control">
+                    <p class="meta-text" style="margin-top:8px;text-align:center">或将 .zip 文件拖拽到此处</p>
+                </div>
             </div>
             <button class="btn btn-primary" onclick="uploadPlugin()">上传并安装</button>
             <div id="uploadProgress" class="meta-text" style="margin-top:8px"></div>
@@ -39,7 +43,7 @@
         <div class="tab-content" id="presetTab" role="tabpanel" aria-labelledby="tabPreset">
             <div class="form-group">
                 <label for="presetSearch" class="sr-only">搜索预设插件</label>
-                <input type="text" id="presetSearch" class="form-control" placeholder="搜索预设插件..." inputmode="search" enterkeyhint="search" oninput="renderPresets()">
+                <input type="text" id="presetSearch" class="form-control" placeholder="搜索预设插件..." inputmode="search" enterkeyhint="search">
             </div>
             <div id="presetList" class="check-list" style="margin-bottom:8px"></div>
             <div class="form-row" style="align-items:center">
@@ -103,9 +107,40 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+.plugin-drop-zone {
+  position: relative;
+  border: 2px dashed var(--hairline);
+  border-radius: var(--r-md);
+  padding: 16px;
+  transition: border-color .2s ease, background-color .2s ease;
+}
+.plugin-drop-zone.dragover {
+  border-color: var(--primary);
+  background: rgba(94,106,210,0.06);
+}
+.plugin-drop-hint {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(94,106,210,0.15);
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 600;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border-radius: var(--r-md);
+}
+.plugin-drop-zone.dragover .plugin-drop-hint {
+  display: flex;
+}
+</style>
 <script>
 var allPlugins = [];
 var allPresets = [];
+var installedPluginIds = {};
 
 function _esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){
@@ -122,7 +157,12 @@ function loadPlugins() {
         '</div>';
     fetch('/api/plugins')
         .then(function(r) { return r.json(); })
-        .then(function(d) { allPlugins = Array.isArray(d) ? d : []; renderPlugins(); })
+        .then(function(d) {
+            allPlugins = Array.isArray(d) ? d : [];
+            installedPluginIds = {};
+            allPlugins.forEach(function(p) { installedPluginIds[p.name] = true; });
+            renderPlugins();
+        })
         .catch(function() {
             allPlugins = [];
             // 统一错误状态：图标+说明+重试按钮（参考 Primer Blankslate error）
@@ -281,11 +321,14 @@ function closeModal(id) {
     _closeModal(id);
 }
 
-function uploadPlugin() {
+function uploadPlugin(files) {
     var fileInput = document.getElementById('pluginZip');
-    if (!fileInput || !fileInput.files[0]) { showToast('请选择 .zip 文件', 'error'); return; }
+    var selectedFile = files || (fileInput && fileInput.files[0] ? [fileInput.files[0]] : null);
+    if (!selectedFile || selectedFile.length === 0) { showToast('请选择 .zip 文件', 'error'); return; }
+    var file = selectedFile[0];
+    if (!file.name.toLowerCase().endsWith('.zip')) { showToast('请上传 .zip 格式的插件包', 'error'); return; }
     var form = new FormData();
-    form.append('file', fileInput.files[0]);
+    form.append('file', file);
     var prog = document.getElementById('uploadProgress');
     var btn = document.querySelector('#uploadTab .btn-primary');
     if (prog) prog.textContent = '上传中...';
@@ -597,6 +640,61 @@ if (window.tdPref) {
     // bind 已恢复值后，触发一次 render 让筛选立即生效
     renderPlugins();
 }
+// 搜索防抖（300ms）
+var _pluginSearchTimer = null;
+document.getElementById('pluginSearch').addEventListener('input', function() {
+    if (_pluginSearchTimer) clearTimeout(_pluginSearchTimer);
+    _pluginSearchTimer = setTimeout(renderPlugins, 300);
+});
+// 预设搜索防抖（300ms）
+var _presetSearchTimer = null;
+document.getElementById('presetSearch').addEventListener('input', function() {
+    if (_presetSearchTimer) clearTimeout(_presetSearchTimer);
+    _presetSearchTimer = setTimeout(renderPresets, 300);
+});
+// 拖拽上传：插件zip拖拽到上传区域
+(function() {
+    var dz = document.getElementById('pluginDropZone');
+    var fileInput = document.getElementById('pluginZip');
+    if (!dz || !fileInput) return;
+    var dragCounter = 0;
+    dz.addEventListener('dragenter', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+        dz.classList.add('dragover');
+    });
+    dz.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    dz.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            dz.classList.remove('dragover');
+        }
+    });
+    dz.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        dz.classList.remove('dragover');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+            var file = e.dataTransfer.files[0];
+            if (file.name.toLowerCase().endsWith('.zip')) {
+                uploadPlugin(e.dataTransfer.files);
+            } else {
+                showToast('请上传 .zip 格式的插件包', 'error');
+            }
+        }
+    });
+})();
+// 暴露已安装插件集合给市场页使用
+window.getInstalledPluginIds = function() { return installedPluginIds; };
+window.refreshInstalledPlugins = loadPlugins;
 // 命令面板注册：插件页专属操作（参考 Linear page-scoped actions）
 if (window.TD_PALETTE) {
     TD_PALETTE.register({

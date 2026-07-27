@@ -2,9 +2,12 @@
 // showToast 由 main.js 全局提供。
 
 var allLogLines = [];
+var _showLogLineNumbers = false;
 
-// 兼容 tdFetch（main.js 注入的统一 fetch 封装，带 token/重试），缺省回退原生 fetch
-var tdFetch = window.tdFetch || fetch;
+// 惰性获取 tdFetch（main.js 可能尚未执行，加载时捕获为 undefined）
+function _tdFetch(url, opts) {
+    return (window.tdFetch || fetch)(url, opts);
+}
 
 // filterLogs 防抖定时器（避免 oninput 每字符全量重建 DOM）
 var _filterTimer = null;
@@ -46,13 +49,12 @@ function loadSources() {
     var dateSel = document.getElementById("logDate");
     var date = dateSel ? dateSel.value : "today";
     var params = (date && date !== "today") ? ("?date=" + encodeURIComponent(date)) : "";
-    tdFetch("/api/logs/sources" + params)
+    _tdFetch("/api/logs/sources" + params)
         .then(function (r) { return r.json(); })
         .then(function (sources) {
             var sel = document.getElementById("logSource");
             if (!sel) return;
             var current = sel.value;
-            // 一次构建字符串再赋值，避免 innerHTML += 触发多次重解析
             var html = '<option value="">全部来源</option>';
             (sources || []).forEach(function (s) {
                 html += '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + "</option>";
@@ -67,7 +69,6 @@ function loadSources() {
 
 // 加载日志（调用增强 API，按级别/来源/关键字/日期过滤）
 function loadLogs() {
-    // 清屏后 30s 内阻止 loadLogs（含 TDPoll 自动轮询）恢复，避免清空被立即覆盖
     if (_clearedAt && Date.now() - _clearedAt < 30000) return;
     var dateSel = document.getElementById("logDate");
     var date = dateSel ? dateSel.value : "today";
@@ -88,11 +89,10 @@ function loadLogs() {
     if (keyword) params.set("keyword", keyword);
     params.set("limit", "500");
 
-    tdFetch("/api/logs/query?" + params.toString())
+    _tdFetch("/api/logs/query?" + params.toString())
         .then(function (r) { return r.json(); })
         .then(function (d) {
             allLogLines = d.lines || [];
-            // 重置清屏门控：成功拉取后允许后续轮询正常工作
             _clearedAt = 0;
             var countEl = document.getElementById("logCount");
             if (countEl) countEl.textContent = allLogLines.length + " 行";
@@ -101,6 +101,103 @@ function loadLogs() {
         .catch(function (e) {
             if (typeof showToast === "function") showToast("加载日志失败: " + e, "error");
         });
+}
+
+// ─── 搜索高亮：用 mark 标签包裹匹配文本 ───
+function _highlightLogText(node, query) {
+    if (!query || !node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+        var text = node.textContent;
+        var lowerText = text.toLowerCase();
+        var idx = lowerText.indexOf(query);
+        if (idx === -1) return;
+        var frag = document.createDocumentFragment();
+        var lastIdx = 0;
+        while (idx !== -1) {
+            if (idx > lastIdx) {
+                frag.appendChild(document.createTextNode(text.slice(lastIdx, idx)));
+            }
+            var mark = document.createElement('mark');
+            mark.textContent = text.slice(idx, idx + query.length);
+            frag.appendChild(mark);
+            lastIdx = idx + query.length;
+            idx = lowerText.indexOf(query, lastIdx);
+        }
+        if (lastIdx < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+        }
+        node.parentNode.replaceChild(frag, node);
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+        if (node.tagName === 'MARK' || node.classList.contains('log-ln')) return;
+        var children = Array.prototype.slice.call(node.childNodes);
+        for (var i = 0; i < children.length; i++) {
+            _highlightLogText(children[i], query);
+        }
+    }
+}
+
+function _clearLogHighlights(container) {
+    if (!container) return;
+    var marks = container.querySelectorAll('mark');
+    for (var i = marks.length - 1; i >= 0; i--) {
+        var mark = marks[i];
+        var parent = mark.parentNode;
+        while (mark.firstChild) {
+            parent.insertBefore(mark.firstChild, mark);
+        }
+        parent.removeChild(mark);
+    }
+    container.normalize();
+}
+
+// ─── 复制单行日志 ───
+function _copyLogLine(lineEl) {
+    if (!lineEl) return;
+    var clone = lineEl.cloneNode(true);
+    var ln = clone.querySelector('.log-ln');
+    if (ln) ln.remove();
+    var text = clone.textContent || '';
+    _copyToClipboard(text.trim(), '已复制该行');
+}
+
+function _copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+            if (typeof showToast === 'function' && successMsg) showToast(successMsg, 'success');
+        }).catch(function () {
+            _fallbackCopy(text, successMsg);
+        });
+    } else {
+        _fallbackCopy(text, successMsg);
+    }
+}
+
+function _fallbackCopy(text, successMsg) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        if (typeof showToast === 'function' && successMsg) showToast(successMsg, 'success');
+    } catch (e) {
+        if (typeof showToast === 'function') showToast('复制失败', 'error');
+    }
+    document.body.removeChild(ta);
+}
+
+// 行号切换
+function toggleLogLineNumbers() {
+    _showLogLineNumbers = !_showLogLineNumbers;
+    var btn = document.getElementById('logLineNumBtn');
+    if (btn) {
+        btn.setAttribute('aria-pressed', _showLogLineNumbers ? 'true' : 'false');
+    }
+    var body = document.getElementById('logBody');
+    if (body) body.classList.toggle('show-log-lines', _showLogLineNumbers);
+    filterLogs();
 }
 
 // 客户端渲染：按级别配色，并叠加关键字高亮过滤
@@ -116,17 +213,44 @@ function filterLogs() {
 
     var body = document.getElementById("logBody");
     if (!body) return;
-    body.innerHTML = lines.map(function (l) {
+    
+    _clearLogHighlights(body);
+    
+    var html = lines.map(function (l, idx) {
         var cls = "line-output";
         if (l.level === "ERROR") cls = "line-err";
         else if (l.level === "WARN") cls = "line-warn";
         else if (l.level === "INFO") cls = "line-system";
+        else if (l.level === "DEBUG") cls = "line-debug";
         var text = "[" + l.time + "][" + l.level + "][" + l.source + "] " + l.message;
-        // 同时挂 log-line 基类（提供 padding/字体/hover）和分级配色类
-        return '<div class="log-line ' + cls + '">' + escapeHtml(text) + "</div>";
+        var lnHtml = _showLogLineNumbers ? ('<span class="log-ln" data-idx="' + idx + '">' + (idx + 1) + '</span>') : '';
+        return '<div class="log-line ' + cls + '">' + lnHtml + escapeHtml(text) + "</div>";
     }).join("");
+    body.innerHTML = html;
+    
+    // 添加搜索高亮
+    if (q) {
+        var lineEls = body.querySelectorAll('.log-line');
+        for (var i = 0; i < lineEls.length; i++) {
+            _highlightLogText(lineEls[i], q);
+        }
+    }
+    
+    // 绑定行号点击事件
+    if (_showLogLineNumbers) {
+        var lnEls = body.querySelectorAll('.log-ln');
+        for (var j = 0; j < lnEls.length; j++) {
+            (function (lnEl) {
+                lnEl.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var line = lnEl.parentNode;
+                    _copyLogLine(line);
+                });
+            })(lnEls[j]);
+        }
+    }
+    
     body.scrollTop = body.scrollHeight;
-    // 过滤后同步计数：显示「过滤后 / 总数 行」
     var countEl = document.getElementById("logCount");
     if (countEl) countEl.textContent = lines.length + " / " + allLogLines.length + " 行";
 }
@@ -175,7 +299,7 @@ function doExport() {
 
 // 加载可用日期列表（保留现有功能，调用 /api/logs/files）
 function loadDates() {
-    tdFetch("/api/logs/files")
+    _tdFetch("/api/logs/files")
         .then(function (r) { return r.json(); })
         .then(function (files) {
             var sel = document.getElementById("logDate");
@@ -192,9 +316,11 @@ function loadDates() {
         .catch(function () { /* 网络抖动忽略，下次刷新重试 */ });
 }
 
-// 初始化
-loadDates();
-loadSources();
-loadLogs();
-if (window.TDPoll) { window.TDPoll.register(loadLogs, 5000); }
-else { setInterval(loadLogs, 5000); }
+// 初始化（延迟到 DOMContentLoaded 后，确保 main.js 的 TDPoll 已就绪）
+document.addEventListener('DOMContentLoaded', function() {
+    loadDates();
+    loadSources();
+    loadLogs();
+    if (window.TDPoll) { window.TDPoll.register(loadLogs, 5000); }
+    else { setInterval(loadLogs, 5000); }
+});

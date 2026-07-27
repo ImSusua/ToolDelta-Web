@@ -63,15 +63,21 @@ function loadBackups() {
                 return;
             }
             // 名称、zip 均转义；onclick 用 JSON.stringify + _esc 双重保险，防止引号闭合
-            container.innerHTML = backups.map(function(b) {
+            // 按时间倒序排列：最新的备份在最前面（后端已排序，前端兜底再次排序）
+            var sortedBackups = backups.slice().sort(function(a, b) {
+                var ta = String(a.time || '');
+                var tb = String(b.time || '');
+                return tb.localeCompare(ta);
+            });
+            container.innerHTML = sortedBackups.map(function(b) {
                 var zipAttr = _esc(JSON.stringify(b.zip));
                 var nameAttr = _esc(b.name);
                 return '<div class="backup-item">' +
                     '<div><strong>' + nameAttr + '</strong>' +
                     '<div class="backup-meta">' + _esc(b.time) + ' | ' + fmtSize(b.size) + '</div></div>' +
                     '<div class="backup-actions">' +
-                    '<button class="btn btn-sm btn-primary" aria-label="还原备份 ' + nameAttr + '" onclick="restoreBackup(' + zipAttr + ', this)">还原</button>' +
-                    '<button class="btn btn-sm btn-danger" aria-label="删除备份 ' + nameAttr + '" onclick="deleteBackup(' + zipAttr + ', this)">删除</button></div></div>';
+                    '<button class="btn btn-sm btn-primary" aria-label="还原备份 ' + nameAttr + '" onclick="restoreBackup(' + zipAttr + ', this, ' + _esc(JSON.stringify(b.name)) + ')">还原</button>' +
+                    '<button class="btn btn-sm btn-danger" aria-label="删除备份 ' + nameAttr + '" onclick="deleteBackup(' + zipAttr + ', this, ' + _esc(JSON.stringify(b.name)) + ')">删除</button></div></div>';
             }).join('');
         })
         .catch(function() {
@@ -105,8 +111,9 @@ function createBackup() {
     });
 }
 
-function restoreBackup(zip, btn) {
-    showConfirm('确定还原此备份？当前数据将被覆盖。建议先创建备份。', function(ok) {
+function restoreBackup(zip, btn, backupName) {
+    var name = backupName || '此备份';
+    showConfirm('确定还原备份「' + name + '」？当前数据将被覆盖。建议先创建备份。', function(ok) {
         if (!ok) return;
         // 操作中禁用按钮 + 进度提示，防止重复点击触发多次还原
         var origText = btn ? btn.textContent : '';
@@ -122,20 +129,21 @@ function restoreBackup(zip, btn) {
     }, true);
 }
 
-function deleteBackup(zip, btn) {
-    showConfirm('确定删除此备份？', function(ok) {
+function deleteBackup(zip, btn, backupName) {
+    var name = backupName || '此备份';
+    showConfirm('确定删除备份「' + name + '」？此操作不可撤销。', function(ok) {
         if (!ok) return;
         var origText = btn ? btn.textContent : '';
         if (btn) { btn.disabled = true; }
         fetch('/api/backup/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({zip: zip}) })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d && d.success) { showToast('已删除', 'info'); loadBackups(); }
+                if (d && d.success) { showToast('已删除备份「' + name + '」', 'info'); loadBackups(); }
                 else { showToast('删除失败: ' + (d.error || ''), 'error'); }
             })
             .catch(function() { showToast('删除请求失败', 'error'); })
             .finally(function() { if (btn) { btn.disabled = false; btn.textContent = origText; } });
-    });
+    }, true);
 }
 
 function showFactoryReset() {

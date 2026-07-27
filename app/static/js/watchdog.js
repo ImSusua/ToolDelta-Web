@@ -1,17 +1,14 @@
 // 看门狗模块前端逻辑
 
-// 转义服务端数据，防止注入到 innerHTML
+// 惰性查找：脚本加载时 main.js 可能尚未执行，_escHtml 为 undefined
 function _esc(s) {
-    if (s === null || s === undefined) return '';
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    return (window._escHtml || function(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function(m) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+        });
+    })(s);
 }
 
-// 状态 diff 缓存：避免每 3s 全量重写 statusArea 引起屏幕阅读器狂播与 DOM 抖动
 var _lastStatusJSON = null;
 var _lastHealthy = null;
 var _lastOk = Date.now();
@@ -36,7 +33,6 @@ function loadStatus() {
         .then(function (r) { return r.json(); })
         .then(function (s) {
             _lastOk = Date.now();
-            // diff：数据未变化则跳过重渲染，避免每 3s 全量 innerHTML 抖动与无谓 DOM 重排
             var sig;
             try { sig = JSON.stringify(s); } catch (_) { sig = null; }
             if (sig !== null && sig === _lastStatusJSON) return;
@@ -44,20 +40,16 @@ function loadStatus() {
             renderStatus(s);
         })
         .catch(function () {
-            // 不再静默：显式错误态 + 重试按钮，告知用户已多久未更新
             renderStatusError();
         });
 }
 
-// 渲染状态卡片：状态药丸 + 关键指标，仅在健康状态变化时播报
 function renderStatus(s) {
     var statusEl = document.getElementById('statusArea');
     if (!statusEl) return;
-    // healthy=true 正常；enabled 但 !healthy 视为 degraded；未启用则 stopped
     var state = s.healthy ? 'healthy' : (s.enabled ? 'degraded' : 'stopped');
     var pillCls = state === 'healthy' ? 'tag-enabled' : (state === 'degraded' ? 'tag-warning' : 'tag-disabled');
     var pillText = state === 'healthy' ? '正常' : (state === 'degraded' ? '异常' : '已停止');
-    // max_restarts 从配置表单读取（loadConfig 已填充），缺失则展示 ?
     var maxEl = document.getElementById('cfg_max_restarts');
     var maxR = maxEl ? maxEl.value : '?';
 
@@ -70,18 +62,28 @@ function renderStatus(s) {
         '</div>';
     statusEl.innerHTML = html;
 
-    // 启用/禁用按钮按状态互斥禁用，避免重复操作
     var enableBtn = document.getElementById('enableWatchdogBtn');
     var disableBtn = document.getElementById('disableWatchdogBtn');
     if (s.enabled) {
-        if (enableBtn) enableBtn.disabled = true;
-        if (disableBtn) disableBtn.disabled = false;
+        if (enableBtn) {
+            enableBtn.disabled = true;
+            enableBtn.className = 'btn btn-success active';
+        }
+        if (disableBtn) {
+            disableBtn.disabled = false;
+            disableBtn.className = 'btn btn-outline';
+        }
     } else {
-        if (enableBtn) enableBtn.disabled = false;
-        if (disableBtn) disableBtn.disabled = true;
+        if (enableBtn) {
+            enableBtn.disabled = false;
+            enableBtn.className = 'btn btn-outline';
+        }
+        if (disableBtn) {
+            disableBtn.disabled = true;
+            disableBtn.className = 'btn btn-danger active';
+        }
     }
 
-    // 仅在健康状态变化时更新 sr-only brief，触发屏幕阅读器播报
     var brief = document.getElementById('watchdogBrief');
     if (brief && _lastHealthy !== s.healthy) {
         brief.textContent = '健康状态：' + (s.healthy ? '正常' : '异常');
@@ -89,7 +91,6 @@ function renderStatus(s) {
     }
 }
 
-// 错误态：显式提示已多久未更新 + 重试按钮
 function renderStatusError() {
     var statusEl = document.getElementById('statusArea');
     if (!statusEl) return;
@@ -107,7 +108,6 @@ function renderStatusError() {
 }
 
 function saveConfig() {
-    // parseInt 失败时回退为 0，避免向服务端发送 NaN
     var safeInt = function (id) { var v = parseInt(document.getElementById(id).value, 10); return isNaN(v) ? 0 : v; };
     var payload = {
         enabled: document.getElementById('cfg_enabled').checked,
@@ -116,68 +116,88 @@ function saveConfig() {
         max_restarts: safeInt('cfg_max_restarts'),
         restart_cooldown: safeInt('cfg_restart_cooldown')
     };
-    // 保存按钮 loading 态 + 防重复点击
     var saveBtn = document.getElementById('watchdogSaveBtn');
     var origText = saveBtn ? saveBtn.textContent : '';
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
-    fetch('/api/watchdog/set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d && d.success) {
-                showToast('配置已保存', 'success');
-                // 强制刷新状态：清空 diff 缓存以确保重新渲染
-                _lastStatusJSON = null;
-                loadStatus();
-            } else {
-                showToast('配置保存失败（参数不合法）', 'error');
-            }
+    if (saveBtn) saveBtn.textContent = '保存中...';
+    tdLock(saveBtn, function () {
+        return fetch('/api/watchdog/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         })
-        .catch(function () { showToast('请求失败', 'error'); })
-        .finally(function () { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText; } });
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d && d.success) {
+                    showToast('配置已保存', 'success');
+                    _lastStatusJSON = null;
+                    loadStatus();
+                } else {
+                    showToast('配置保存失败（参数不合法）', 'error');
+                }
+            })
+            .catch(function () { showToast('请求失败', 'error'); });
+    }).then(function () {
+        if (saveBtn) saveBtn.textContent = origText;
+    }, function () {
+        if (saveBtn) saveBtn.textContent = origText;
+    });
 }
 
 function enableWatchdog(btn) {
-    if (btn) { btn.disabled = true; }
-    fetch('/api/watchdog/enable', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d && d.success) {
-                showToast('看门狗已启用', 'success');
-                loadConfig();
-                _lastStatusJSON = null; loadStatus();
-            } else { showToast('启用失败', 'error'); }
-        })
-        .catch(function () { showToast('请求失败', 'error'); })
-        .finally(function () {
-            // 按钮禁用由 renderStatus 按状态决定，这里仅解除 loading
-            if (btn) { btn.disabled = false; }
-        });
+    tdLock(btn, function () {
+        return fetch('/api/watchdog/enable', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d && d.success) {
+                    showToast('看门狗已启用', 'success');
+                    loadConfig();
+                    _lastStatusJSON = null; loadStatus();
+                } else { showToast('启用失败', 'error'); }
+            })
+            .catch(function () { showToast('请求失败', 'error'); });
+    });
 }
 
 function disableWatchdog(btn) {
-    if (btn) { btn.disabled = true; }
-    fetch('/api/watchdog/disable', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d && d.success) {
-                showToast('看门狗已禁用', 'success');
-                loadConfig();
-                _lastStatusJSON = null; loadStatus();
-            } else { showToast('禁用失败', 'error'); }
-        })
-        .catch(function () { showToast('请求失败', 'error'); })
-        .finally(function () {
-            if (btn) { btn.disabled = false; }
-        });
+    tdLock(btn, function () {
+        return fetch('/api/watchdog/disable', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d && d.success) {
+                    showToast('看门狗已禁用', 'success');
+                    loadConfig();
+                    _lastStatusJSON = null; loadStatus();
+                } else { showToast('禁用失败', 'error'); }
+            })
+            .catch(function () { showToast('请求失败', 'error'); });
+    });
+}
+
+function checkNow(btn) {
+    var origText = btn ? btn.textContent : '';
+    if (btn) btn.textContent = '检查中...';
+    tdLock(btn, function () {
+        return fetch('/api/watchdog/check', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d && d.success) {
+                    showToast('检查完成', 'success');
+                    _lastStatusJSON = null;
+                    loadStatus();
+                } else {
+                    showToast((d && d.error) || '检查失败', 'error');
+                }
+            })
+            .catch(function () { showToast('请求失败', 'error'); });
+    }).then(function () {
+        if (btn) btn.textContent = origText;
+    }, function () {
+        if (btn) btn.textContent = origText;
+    });
 }
 
 loadConfig();
 loadStatus();
-// 优先使用全局可见性感知轮询器；缺失时本地 setInterval 也响应 Page Visibility 暂停
 if (window.TDPoll) {
     window.TDPoll.register(loadStatus, 3000);
 } else {

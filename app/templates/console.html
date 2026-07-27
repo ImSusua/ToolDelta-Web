@@ -16,7 +16,13 @@
         <div class="console-toolbar" role="toolbar" aria-label="控制台工具">
             <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="pauseScrollBtn" onclick="togglePauseScroll()" aria-pressed="false" aria-label="暂停自动滚动" title="暂停自动滚动（新消息不自动滚动到底部）"><span class="ico" aria-hidden="true">⏸</span><span class="lbl">暂停</span></button>
             <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="timestampBtn" onclick="toggleTimestamps()" aria-pressed="false" aria-label="显示时间戳" title="显示 / 隐藏每行时间戳"><span class="ico" aria-hidden="true">🕒</span><span class="lbl">时间</span></button>
-            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="lineNumberBtn" onclick="toggleLineNumbers()" aria-pressed="false" aria-label="显示行号" title="显示 / 隐藏行号"><span class="ico" aria-hidden="true">#</span><span class="lbl">行号</span></button>
+            <button type="button" class="btn btn-sm btn-outline console-tool-btn" id="lineNumberBtn" onclick="toggleLineNumbers()" aria-pressed="false" aria-label="显示行号" title="显示 / 隐藏行号（点击行号可复制该行）"><span class="ico" aria-hidden="true">#</span><span class="lbl">行号</span></button>
+            <div class="console-level-filters" role="group" aria-label="日志级别筛选">
+                <button type="button" class="btn btn-sm console-level-btn" id="levelBtn_log-info" onclick="toggleLevelFilter('log-info')" aria-pressed="false" title="只显示 INFO">INFO</button>
+                <button type="button" class="btn btn-sm console-level-btn level-warn" id="levelBtn_log-warn" onclick="toggleLevelFilter('log-warn')" aria-pressed="false" title="只显示 WARN">WARN</button>
+                <button type="button" class="btn btn-sm console-level-btn level-error" id="levelBtn_log-error" onclick="toggleLevelFilter('log-error')" aria-pressed="false" title="只显示 ERROR">ERROR</button>
+                <button type="button" class="btn btn-sm console-level-btn level-debug" id="levelBtn_log-debug" onclick="toggleLevelFilter('log-debug')" aria-pressed="false" title="只显示 DEBUG">DEBUG</button>
+            </div>
             <div class="console-search">
                 <input type="search" id="consoleSearch" placeholder="过滤输出..." autocomplete="off" inputmode="search" enterkeyhint="search" aria-label="过滤控制台输出">
                 <button type="button" class="console-search-clear" id="consoleSearchClear" onclick="clearConsoleSearch()" aria-label="清除过滤" style="display:none">×</button>
@@ -108,7 +114,7 @@
   border-radius:var(--r-sm); padding:3px 10px; font-size:12px; font-family:inherit;
   max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   flex-shrink:0;
-  transition: all .15s var(--ease);
+  transition: border-color .15s var(--ease), color .15s var(--ease), background-color .15s var(--ease), box-shadow .15s var(--ease);
 }
 .fav-chip:hover { border-color:var(--primary); color:var(--ink); background:rgba(94,106,210,0.15); box-shadow:0 0 0 3px rgba(94,106,210,0.12); }
 .console-body {
@@ -121,6 +127,7 @@
     #050608;
   box-shadow: inset 0 0 50px rgba(0,0,0,0.6);
   scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent;
+  contain: layout style paint;
 }
 /* 移动端控制台高度：覆盖上方 440px 默认值（内联 style 优先级最高，故需 !important） */
 @media (max-width: 768px) {
@@ -129,13 +136,14 @@
 @media (max-width: 400px) {
   .console-body { height: 50vh !important; font-size: 11px; }
 }
-.console-body > div { padding:1px 4px; border-radius:4px; transition: background .12s; }
+.console-body > div { padding:1px 4px; border-radius:4px; transition: background .12s; position: relative; }
 .console-body > div:hover { background: rgba(255,255,255,0.04); }
 .console-foot {
   display:flex; align-items:center; gap:8px;
   border-top:1px solid var(--hairline);
   background: rgba(255,255,255,0.02);
   padding-left:14px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   transition: box-shadow .18s var(--ease);
 }
 .console-foot::before { content:'❯'; color:var(--primary-hover); font-weight:700; font-size:14px; transition: color .18s; }
@@ -260,12 +268,14 @@
 .console-body:not(.show-ts) > div .c-ts { display: none; }
 .console-body.show-ts > div .c-ts { display: inline-block; }
 
-/* 过滤隐藏行 */
-.console-body > div.is-filtered-out {
+/* 过滤隐藏行（搜索过滤 + 级别过滤） */
+.console-body > div.is-filtered-out,
+.console-body > div.is-level-filtered {
   display: none;
 }
 /* 高亮匹配文本（搜索过滤命中） */
-.console-body mark {
+.console-body mark,
+.log-body mark {
   background: rgba(245, 166, 35, 0.35);
   color: inherit;
   border-radius: 2px;
@@ -274,6 +284,91 @@
 /* 暂停滚动状态：边框轻微高亮提示 */
 .console-bar.is-paused {
   box-shadow: inset 0 -1px 0 var(--warning);
+}
+
+/* ─── 日志级别筛选按钮组 ─── */
+.console-level-filters {
+  display: flex;
+  gap: 2px;
+  margin: 0 2px;
+}
+.console-level-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  color: var(--ink-subtle);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background-color .15s, color .15s, border-color .15s;
+  line-height: 1.4;
+}
+.console-level-btn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.console-level-btn[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: rgba(94, 106, 210, 0.2);
+  color: var(--primary-hover);
+}
+.console-level-btn.level-warn[aria-pressed="true"] {
+  border-color: var(--warning);
+  background: rgba(245, 166, 35, 0.15);
+  color: var(--warning);
+}
+.console-level-btn.level-error[aria-pressed="true"] {
+  border-color: var(--danger);
+  background: rgba(229, 72, 77, 0.15);
+  color: var(--danger);
+}
+.console-level-btn.level-debug[aria-pressed="true"] {
+  border-color: var(--ink-tertiary);
+  background: rgba(138, 143, 152, 0.15);
+  color: var(--ink-subtle);
+}
+/* 极小屏隐藏级别按钮文字，只保留 ? 图标 */
+@media (max-width: 640px) {
+  .console-level-filters { display: none; }
+}
+
+/* ─── DOM 行号样式（支持点击复制，替代 CSS counter） ─── */
+.console-body {
+  padding-left: 14px;
+}
+.console-body.show-lines {
+  padding-left: 52px;
+}
+/* 覆盖旧 CSS counter 样式，用 DOM 行号替代 */
+.console-body.show-lines > div::before {
+  content: none !important;
+}
+.console-body .c-ln {
+  display: none;
+  position: absolute;
+  left: -38px;
+  width: 32px;
+  text-align: right;
+  color: var(--ink-tertiary);
+  font-size: 11px;
+  opacity: 0.55;
+  user-select: none;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  cursor: pointer;
+  transition: opacity .15s, color .15s;
+}
+.console-body.show-lines .c-ln {
+  display: inline-block;
+}
+.console-body .c-ln:hover {
+  opacity: 1;
+  color: var(--primary-hover);
+}
+@media (max-width: 400px) {
+  .console-body.show-lines { padding-left: 42px; }
+  .console-body.show-lines .c-ln { left: -30px; width: 24px; }
 }
 </style>
 {% endblock %}

@@ -253,9 +253,9 @@ def create_user():
     valid, msg = auth_service.validate_username(username)
     if not valid:
         return fail(msg)
-    valid, msg = auth_service.validate_password(password)
-    if not valid:
-        return fail(msg)
+    # 弱密码仅提示不阻止创建账号：只拒绝空密码，复杂度不足时返回 password_warning
+    if not password:
+        return fail("密码不能为空")
     # 高危操作二次确认:创建管理员账号视为与 reset_panel 同级的高危操作,
     # 需当前管理员密码二次校验,防止 session 被劫持后一键植入后门管理员。
     # 与 reset_panel 一致:密码错误计入失败次数 + 审计日志

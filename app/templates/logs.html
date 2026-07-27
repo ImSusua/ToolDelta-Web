@@ -4,6 +4,7 @@
 <div class="page-header">
     <h1>日志</h1>
     <div>
+        <button class="btn btn-sm btn-outline" id="logLineNumBtn" onclick="toggleLogLineNumbers()" aria-pressed="false" title="显示/隐藏行号（点击行号可复制该行）"><span aria-hidden="true">#</span> 行号</button>
         <button class="btn btn-primary" onclick="loadLogs()">搜索</button>
         <button class="btn btn-outline" onclick="refreshLogs()">刷新</button>
         <button class="btn btn-outline" onclick="doExport()">导出</button>
@@ -17,6 +18,7 @@
         <option value="INFO">INFO</option>
         <option value="WARN">WARN</option>
         <option value="ERROR">ERROR</option>
+        <option value="DEBUG">DEBUG</option>
     </select>
     <select id="logSource" aria-label="按来源筛选"><option value="">全部来源</option></select>
     <input type="text" id="logFilter" placeholder="关键字过滤..." oninput="debounceFilter()" inputmode="search" aria-label="关键字过滤">
@@ -44,6 +46,43 @@
 @media (max-width: 768px) {
     .logs-search-bar, .search-bar { flex-direction: column; }
 }
+
+/* ─── 日志行号样式 ─── */
+.log-body {
+    padding-left: 14px;
+}
+.log-body.show-log-lines {
+    padding-left: 52px;
+}
+.log-body .log-line {
+    position: relative;
+}
+.log-body .log-line .log-ln {
+    display: none;
+    position: absolute;
+    left: -38px;
+    width: 32px;
+    text-align: right;
+    color: var(--ink-tertiary);
+    font-size: 11px;
+    opacity: 0.55;
+    user-select: none;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    cursor: pointer;
+    transition: opacity .15s, color .15s;
+}
+.log-body.show-log-lines .log-line .log-ln {
+    display: inline-block;
+}
+.log-body .log-line .log-ln:hover {
+    opacity: 1;
+    color: var(--primary-hover);
+}
+@media (max-width: 400px) {
+    .log-body.show-log-lines { padding-left: 42px; }
+    .log-body.show-log-lines .log-line .log-ln { left: -30px; width: 24px; }
+}
+/* 搜索高亮在 console.html 中已统一定义 .log-body mark */
 </style>
 {% endblock %}
 

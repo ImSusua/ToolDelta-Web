@@ -7,7 +7,7 @@
 </div>
 
 <div class="search-bar">
-    <input type="text" id="marketSearch" placeholder="搜索插件名/作者..." inputmode="search" enterkeyhint="search" oninput="renderMarket()" aria-label="搜索插件">
+    <input type="text" id="marketSearch" placeholder="搜索插件名/作者..." inputmode="search" enterkeyhint="search" aria-label="搜索插件">
     <select id="marketSearchBy" onchange="renderMarket()" aria-label="搜索方式">
         <option value="name">按名称</option>
         <option value="author">按作者</option>
@@ -71,13 +71,16 @@ function renderMarket() {
     container.innerHTML = list.map(function(p) {
         // JSON.stringify 已转义双引号；再 _mEsc 处理属性边界，避免引号闭合逃逸
         var idAttr = _mEsc(JSON.stringify(p.id));
+        var installed = isPluginInstalled(p.id, p.name);
         return '<div class="plugin-card">' +
-            '<div class="p-name">' + _mEsc(p.name) + '</div>' +
+            '<div class="p-name">' + _mEsc(p.name) + (installed ? ' <span class="tag tag-enabled">已安装</span>' : '') + '</div>' +
             '<div class="p-meta">v' + _mEsc(p.version) + ' | ' + _mEsc(p.author) + ' | <span class="tag tag-classic">' + _mEsc(p.plugin_type || 'classic') + '</span></div>' +
             '<div class="p-desc">' + _mEsc(p.description || '暂无描述') + '</div>' +
             '<div class="p-actions">' +
             '<button class="btn btn-sm btn-outline" onclick="showMarketDetail(' + idAttr + ')">详情</button>' +
-            '<button class="btn btn-sm btn-success" onclick="quickInstall(' + idAttr + ')">安装</button>' +
+            (installed ?
+                '<button class="btn btn-sm btn-outline" disabled style="opacity:0.6;cursor:not-allowed">已安装</button>' :
+                '<button class="btn btn-sm btn-success" onclick="quickInstall(this, ' + idAttr + ')">安装</button>') +
             '</div></div>';
     }).join('');
 }
@@ -112,7 +115,22 @@ function showMarketDetail(pid) {
             '</table>';
     }
     var btn = document.getElementById('marketInstallBtn');
-    if (btn) btn.textContent = '安装 ' + p.name;
+    var pInstalled = isPluginInstalled(p.id, p.name);
+    if (btn) {
+        if (pInstalled) {
+            btn.textContent = '已安装';
+            btn.disabled = true;
+            btn.className = 'btn btn-outline';
+            btn.style.opacity = '0.6';
+            btn.style.cursor = 'not-allowed';
+        } else {
+            btn.textContent = '安装 ' + p.name;
+            btn.disabled = false;
+            btn.className = 'btn btn-success';
+            btn.style.opacity = '';
+            btn.style.cursor = '';
+        }
+    }
     // 必须走 _openModal 而非直接 classList.add('active')：
     // _openModal 负责 _setInertExcept（让背景不可 Tab 聚焦/屏幕阅读器访问）、
     // 记录 _lastFocus（关闭后焦点归还触发按钮）、自动聚焦弹窗内首个可交互元素。
@@ -127,33 +145,88 @@ function showMarketDetail(pid) {
 function installFromMarket() {
     if (!selectedPluginId) return;
     var btn = document.getElementById('marketInstallBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '安装中...'; }
-    fetch('/api/plugins/install-preset', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plugin_id: selectedPluginId}) })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d.success) { showToast(d.message + ' 安装成功', 'success'); closeModal('marketDetailModal'); }
-            else showToast(d.error || '安装失败', 'error');
-        })
-        .catch(function() { showToast('请求失败', 'error'); })
-        .finally(function() { if (btn) { btn.disabled = false; btn.textContent = '安装此插件'; } });
+    if (!btn || btn.disabled) return;
+    tdLock(btn, function() {
+        return fetch('/api/plugins/install-preset', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plugin_id: selectedPluginId}) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    showToast(d.message + ' 安装成功', 'success');
+                    closeModal('marketDetailModal');
+                    refreshInstalledAndRender();
+                } else {
+                    showToast(d.error || '安装失败', 'error');
+                }
+            })
+            .catch(function() { showToast('请求失败', 'error'); });
+    });
 }
 
-function quickInstall(pid) {
-    fetch('/api/plugins/install-preset', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plugin_id: pid}) })
+function quickInstall(btn, pid) {
+    if (!btn || btn.disabled) return;
+    tdLock(btn, function() {
+        var origText = btn.textContent;
+        btn.textContent = '安装中...';
+        return fetch('/api/plugins/install-preset', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plugin_id: pid}) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    showToast(d.message + ' 安装成功', 'success');
+                    refreshInstalledAndRender();
+                } else {
+                    showToast(d.error || '安装失败', 'error');
+                    btn.textContent = origText;
+                }
+            })
+            .catch(function() {
+                showToast('请求失败', 'error');
+                btn.textContent = origText;
+            });
+    });
+}
+
+var _installedCache = null;
+function isPluginInstalled(pid, name) {
+    if (window.getInstalledPluginIds) {
+        var ids = window.getInstalledPluginIds();
+        if (ids[name] || ids[pid]) return true;
+    }
+    if (_installedCache) {
+        for (var i = 0; i < _installedCache.length; i++) {
+            if (_installedCache[i].name === name || _installedCache[i].name === pid) return true;
+        }
+    }
+    return false;
+}
+
+function loadInstalledPlugins() {
+    return fetch('/api/plugins')
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (d.success) showToast(d.message + ' 安装成功', 'success');
-            else showToast(d.error || '安装失败', 'error');
+            _installedCache = Array.isArray(d) ? d : [];
+            return _installedCache;
         })
-        .catch(function() { showToast('请求失败', 'error'); });
+        .catch(function() { _installedCache = []; return []; });
+}
+
+function refreshInstalledAndRender() {
+    if (window.refreshInstalledPlugins) window.refreshInstalledPlugins();
+    loadInstalledPlugins().then(function() { renderMarket(); });
 }
 
 loadMarket();
+loadInstalledPlugins();
 // 视图状态持久化：刷新后保留搜索方式（参考 Linear 筛选记忆）
 if (window.tdPref) {
     tdPref.bind('market', document.getElementById('marketSearch'), 'q');
     tdPref.bind('market', document.getElementById('marketSearchBy'), 'by');
     renderMarket();
 }
+// 搜索防抖（300ms）
+var _marketSearchTimer = null;
+document.getElementById('marketSearch').addEventListener('input', function() {
+    if (_marketSearchTimer) clearTimeout(_marketSearchTimer);
+    _marketSearchTimer = setTimeout(renderMarket, 300);
+});
 </script>
 {% endblock %}

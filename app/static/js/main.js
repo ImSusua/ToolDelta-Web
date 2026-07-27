@@ -1,6 +1,18 @@
 // ─── Toast 通知系统（升级版：进度条 / 点击关闭 / 堆叠上限 / 分类型时长） ───
 var _TOAST_MAX = 5;            // 最多同时显示 5 条
 var _TOAST_DURATIONS = { success: 3000, info: 3500, error: 6000, warning: 5000 };
+function _getCssDuration(varName, fallbackMs) {
+    try {
+        var val = getComputedStyle(document.documentElement).getPropertyValue(varName);
+        if (val) {
+            val = val.trim();
+            if (val.endsWith('ms')) return parseFloat(val);
+            if (val.endsWith('s')) return parseFloat(val) * 1000;
+        }
+    } catch(e) {}
+    return fallbackMs;
+}
+var _TOAST_ANIM_DUR = _getCssDuration('--duration-base', 200);
 // showToast(msg, type, opts) —— 兼容旧调用 showToast(msg, type)
 // opts.action: { label: '重试', fn: function(){...} } 参考 figr.design toast retry button
 function showToast(msg, type, opts) {
@@ -27,9 +39,13 @@ function showToast(msg, type, opts) {
     }
     html += '<button class="toast-close" aria-label="关闭">×</button><span class="toast-bar"></span>';
     t.innerHTML = html;
-    // 点击/触摸关闭（但点击 action 按钮不关闭，由 action 自己处理）
+    // 点击/触摸关闭（但点击 action 按钮、关闭按钮、消息文本区域不关闭，文本区域允许选中）
     t.addEventListener('click', function(e) {
-        if (e.target && e.target.classList && e.target.classList.contains('toast-action')) return;
+        if (e.target && e.target.classList) {
+            if (e.target.classList.contains('toast-action')) return;
+            if (e.target.classList.contains('toast-msg')) return;
+            if (e.target.closest('.toast-msg')) return;
+        }
         removeToast(t);
     });
     container.appendChild(t);
@@ -44,21 +60,64 @@ function showToast(msg, type, opts) {
             removeToast(t);
         });
     }
+    // 绑定关闭按钮
+    var closeBtn = t.querySelector('.toast-close');
+    if (closeBtn) closeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        removeToast(t);
+    });
     // 进度条动画
     var bar = t.querySelector('.toast-bar');
-    if (bar) {
-        // 强制重排后启动宽度过渡
+    t._dur = dur;
+    t._startTime = Date.now();
+    t._remaining = dur;
+    function _startBar(remaining, startPct) {
+        if (!bar) return;
+        startPct = startPct != null ? startPct : 100;
+        bar.style.transition = 'none';
+        bar.style.width = startPct + '%';
+        bar.offsetHeight;
         requestAnimationFrame(function() {
-            bar.style.transition = 'width ' + dur + 'ms linear';
+            bar.style.transition = 'width ' + remaining + 'ms linear';
             bar.style.width = '0%';
         });
     }
+    _startBar(dur);
     t._timer = setTimeout(function() { removeToast(t); }, dur);
-    // 悬停暂停
-    t.addEventListener('mouseenter', function() { if (t._timer) { clearTimeout(t._timer); t._timer = null; } if (bar) { bar.style.transition = 'none'; } });
+    // 悬停暂停：记录剩余时间，离开后继续剩余时间而非重新开始
+    t.addEventListener('mouseenter', function() {
+        if (t._removed) return;
+        if (t._timer) {
+            clearTimeout(t._timer);
+            t._timer = null;
+        }
+        var elapsed = Date.now() - t._startTime;
+        t._remaining = Math.max(0, t._remaining - elapsed);
+        t._pausedAt = Date.now();
+        t._pausedPct = null;
+        if (bar) {
+            var computedStyle = window.getComputedStyle(bar);
+            t._pausedPct = parseFloat(computedStyle.width) / bar.parentElement.offsetWidth * 100;
+            if (isNaN(t._pausedPct)) t._pausedPct = (t._remaining / t._dur) * 100;
+            bar.style.transition = 'none';
+            bar.style.width = t._pausedPct + '%';
+        }
+    });
     t.addEventListener('mouseleave', function() {
-        if (bar) { var w = bar.offsetWidth; bar.style.transition = 'width ' + Math.max(500, dur) + 'ms linear'; bar.style.width = '0%'; }
-        t._timer = setTimeout(function() { removeToast(t); }, Math.max(1000, dur));
+        if (t._removed) return;
+        if (t._pausedAt) {
+            t._startTime = Date.now();
+            var rem = t._remaining;
+            var startPct = t._pausedPct;
+            if (rem > 0) {
+                _startBar(rem, startPct);
+                t._timer = setTimeout(function() { removeToast(t); }, rem);
+            } else {
+                removeToast(t);
+            }
+            t._pausedAt = null;
+            t._pausedPct = null;
+        }
     });
 }
 function removeToast(t) {
@@ -66,7 +125,7 @@ function removeToast(t) {
     t._removed = true; // 防止 click 与 mouseleave/timer 重复触发导致多次 setTimeout
     if (t._timer) { clearTimeout(t._timer); t._timer = null; }
     t.classList.add('toast-out');
-    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, _TOAST_ANIM_DUR);
 }
 function _escHtml(s) {
     return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -249,6 +308,20 @@ function toggleTool() {
     _togglingTool = true;
     btn.disabled = true;
     btn.textContent = isRunning ? '停止中…' : '启动中…';
+
+    var transitionState = isRunning ? 'stopping' : 'starting';
+    if (typeof window.updateSidebarStatusDot === 'function') {
+        window.updateSidebarStatusDot(transitionState);
+    }
+    if (typeof window.updateStatusIcon === 'function') {
+        window.updateStatusIcon('statusIcon', transitionState);
+        window.updateStatusIcon('dashToolIcon', transitionState);
+    }
+    var statusText = document.getElementById('dashToolStatus');
+    var topStatusText = document.getElementById('statusText');
+    if (statusText) statusText.textContent = isRunning ? '停止中...' : '启动中...';
+    if (topStatusText) topStatusText.textContent = isRunning ? '停止中...' : '启动中...';
+
     // 进程状态指示器进入"启动中/停止中"过渡态，给用户即时视觉反馈
     var psEl = document.getElementById('processStatus');
     if (psEl) {
@@ -268,10 +341,7 @@ function toggleTool() {
                 btn.disabled = false;
                 btn.textContent = isRunning ? '停止' : '启动';
                 // 恢复进程状态指示器
-                if (psEl) {
-                    psEl.textContent = isRunning ? '进程运行中' : '进程未启动';
-                    psEl.className = 'process-status ' + (isRunning ? 'running' : 'stopped');
-                }
+                updateToggleState(isRunning);
             }
         })
         .catch(function() {
@@ -279,21 +349,18 @@ function toggleTool() {
             showToast('请求失败', 'error');
             btn.disabled = false;
             btn.textContent = isRunning ? '停止' : '启动';
-            if (psEl) {
-                psEl.textContent = isRunning ? '进程运行中' : '进程未启动';
-                psEl.className = 'process-status ' + (isRunning ? 'running' : 'stopped');
-            }
+            updateToggleState(isRunning);
         });
 }
 
-function updateToggleState(running) {
+function updateToggleState(running, transitionState) {
     var btn1 = document.getElementById('mainToggleBtn');
     var btn2 = document.getElementById('consoleToggleBtn');
     [btn1, btn2].forEach(function(btn) {
         if (!btn) return;
         // 切换请求进行中时不要提前重新启用按钮，避免 checkStatus 3s 轮询期间用户重复点击
         // 触发第二次 /api/tool/start（P2 #12）
-        if (_togglingTool) return;
+        if (_togglingTool && !transitionState) return;
         btn.disabled = false;
         btn.setAttribute('data-running', running ? 'true' : 'false');
         btn.textContent = running ? '停止' : '启动';
@@ -301,60 +368,103 @@ function updateToggleState(running) {
         // 首次状态回填后清除 aria-busy（index.html 初始为 "检测中..." 占位）
         btn.setAttribute('aria-busy', 'false');
     });
-    var sd = document.getElementById('sidebarStatus');
-    if (sd) {
-        sd.className = 'status-dot ' + (running ? 'running' : 'stopped');
-        sd.title = running ? '运行中' : '已停止';
-        // 同步无障碍标签，让屏幕阅读器能感知连接状态（不仅是颜色）
-        sd.setAttribute('aria-label', running ? 'ToolDelta 运行中' : 'ToolDelta 已停止');
+
+    var state = transitionState || (running ? 'running' : 'stopped');
+    if (typeof window.updateSidebarStatusDot === 'function') {
+        window.updateSidebarStatusDot(state);
+    } else {
+        var sd = document.getElementById('sidebarStatus');
+        if (sd) {
+            sd.className = 'status-dot ' + state;
+            sd.title = running ? '运行中' : '已停止';
+            sd.setAttribute('aria-label', running ? 'ToolDelta 运行中' : 'ToolDelta 已停止');
+        }
+        var stText = document.getElementById('sidebarStatusText');
+        if (stText) stText.textContent = running ? 'ToolDelta 运行中' : 'ToolDelta 已停止';
     }
-    // 同步 sr-only 文本（base.html 中 #sidebarStatusText）
-    var stText = document.getElementById('sidebarStatusText');
-    if (stText) stText.textContent = running ? 'ToolDelta 运行中' : 'ToolDelta 已停止';
+
+    if (typeof window.updateStatusIcon === 'function') {
+        window.updateStatusIcon('statusIcon', transitionState || running);
+        window.updateStatusIcon('dashToolIcon', transitionState || running);
+    }
+
+    var statusText = document.getElementById('dashToolStatus');
+    var topStatusText = document.getElementById('statusText');
+    if (statusText) {
+        if (transitionState === 'starting') statusText.textContent = '启动中...';
+        else if (transitionState === 'stopping') statusText.textContent = '停止中...';
+        else statusText.textContent = running ? '运行中' : '已停止';
+    }
+    if (topStatusText) {
+        if (transitionState === 'starting') topStatusText.textContent = '启动中...';
+        else if (transitionState === 'stopping') topStatusText.textContent = '停止中...';
+        else topStatusText.textContent = running ? '运行中' : '已停止';
+    }
+
     // 同步控制台 process-status 指示器（与 Socket.IO 通道状态分离，
     // 让用户能区分「进程运行中」与「实时通道断开」两种不同情况，
     // 修复「点击启动后显示未连接」的 UX 误导）
     window._tdProcessRunning = running;
     var psEl = document.getElementById('processStatus');
     if (psEl) {
-        psEl.textContent = running ? '进程运行中' : '进程未启动';
-        psEl.className = 'process-status ' + (running ? 'running' : 'stopped');
+        if (transitionState) {
+            psEl.textContent = transitionState === 'starting' ? '启动中…' : '停止中…';
+            psEl.className = 'process-status starting';
+        } else {
+            psEl.textContent = running ? '进程运行中' : '进程未启动';
+            psEl.className = 'process-status ' + (running ? 'running' : 'stopped');
+        }
     }
 }
 
 // ─── 自定义确认弹窗（替代浏览器 confirm） + 输入确认弹窗 ───
 var _confirmCallback = null;
 var _promptCallback = null;
-var _lastFocus = null;  // 打开弹窗前记录焦点，关闭后归还
+var _focusStack = [];  // 焦点栈：支持嵌套弹窗，记录每层打开前的焦点元素
+var _modalOpenCount = 0;
+var _MODAL_ANIM_DUR = _getCssDuration('--duration-base', 200);
 
-function showConfirm(msg, callback, danger) {
-    _lastFocus = document.activeElement;
+// showConfirm 支持自定义标题和按钮文本
+// 用法：showConfirm(msg, callback, danger) 或 showConfirm(msg, callback, opts)
+// opts: { title?: string, okText?: string, cancelText?: string, danger?: boolean }
+function showConfirm(msg, callback, opts) {
+    var danger = false;
+    var options = {};
+    if (typeof opts === 'object' && opts !== null) {
+        options = opts;
+        danger = options.danger === true;
+    } else {
+        danger = opts === true;
+    }
+    var titleEl = document.getElementById('confirmTitle');
+    var cancelBtn = document.querySelector('#confirmModal .modal-actions .btn-outline');
     var msgEl = document.getElementById('confirmMessage');
     var okBtn = document.getElementById('confirmOkBtn');
     var modal = document.getElementById('confirmModal');
     if (!msgEl || !okBtn || !modal) return;
     msgEl.textContent = msg;
-    okBtn.className = 'btn ' + (danger === false ? 'btn-primary' : 'btn-danger');
-    okBtn.textContent = '确定';
+    if (titleEl) titleEl.textContent = options.title || '确认';
+    if (cancelBtn) cancelBtn.textContent = options.cancelText || '取消';
+    okBtn.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+    okBtn.textContent = options.okText || '确定';
     _confirmCallback = callback;
-    modal.classList.add('active');
-    setTimeout(function() { okBtn.focus(); }, 50);
+    _openModal('confirmModal');
 }
 
 function closeConfirm(result) {
     var modal = document.getElementById('confirmModal');
-    if (modal) modal.classList.remove('active');
+    if (!modal) return;
+    _closeModal('confirmModal');
     if (_confirmCallback) {
-        _confirmCallback(result);
+        var cb = _confirmCallback;
         _confirmCallback = null;
+        try { cb(result); } catch(e) {}
     }
-    if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
 }
 
 // 自定义输入弹窗（替代浏览器 prompt）
 // type 可选：'text'(默认) / 'password'(用于密码确认场景，避免明文显示被旁人窥视)
 function showPrompt(title, placeholder, defaultValue, callback, type) {
-    _lastFocus = document.activeElement;
     var modal = document.getElementById('promptModal');
     var titleEl = document.getElementById('promptTitle');
     var input = document.getElementById('promptInput');
@@ -362,51 +472,91 @@ function showPrompt(title, placeholder, defaultValue, callback, type) {
     titleEl.textContent = title;
     input.placeholder = placeholder || '';
     input.value = defaultValue || '';
-    // 支持密码模式：confirmReset 等场景输入当前密码时不希望明文显示
     input.type = (type === 'password') ? 'password' : 'text';
     _promptCallback = callback;
-    modal.classList.add('active');
-    setTimeout(function() { input.focus(); input.select(); }, 50);
+    _openModal('promptModal');
+    setTimeout(function() { input.focus(); input.select(); }, _MODAL_ANIM_DUR / 2);
 }
 
 function closePrompt(result) {
     var modal = document.getElementById('promptModal');
-    if (modal) modal.classList.remove('active');
     var input = document.getElementById('promptInput');
+    if (!modal) return;
+    _closeModal('promptModal');
     var val = (result && input) ? input.value : null;
-    // 关闭后重置 type，避免下次 showPrompt 忘传 type 时残留 password 导致输入不可见
     if (input) input.type = 'text';
     if (_promptCallback) {
-        _promptCallback(val);
+        var cb = _promptCallback;
         _promptCallback = null;
+        try { cb(val); } catch(e) {}
     }
-    if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
 }
 
 // ─── 模态框：Esc 关闭 + 背景点击关闭 + 焦点陷阱 ───
+function _getPrimaryFocusTarget(m) {
+    var primary = m.querySelector('.btn-primary, .btn-danger, .btn-success, [data-autofocus]');
+    if (primary && !primary.disabled) return primary;
+    var focusable = m.querySelectorAll('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])');
+    return focusable.length ? focusable[0] : null;
+}
 function _openModal(id) {
-    _lastFocus = document.activeElement;
     var m = document.getElementById(id);
     if (!m) return;
+    _focusStack.push({
+        id: id,
+        focus: document.activeElement
+    });
+    _modalOpenCount++;
+    if (_modalOpenCount === 1) {
+        document.body.classList.add('modal-open');
+    }
     m.classList.add('active');
-    // 标记背景为 inert：阻止屏幕阅读器与 Tab 访问背景内容
     _setInertExcept(m);
-    // 恢复上次选中的标签页（参考 Linear 标签记忆）
     try { _restoreTabState(m); } catch(_) {}
-    var focusable = m.querySelectorAll('input:not([type=hidden]),select,textarea,button,a[href]');
-    if (focusable.length) setTimeout(function() { focusable[0].focus(); }, 50);
+    setTimeout(function() {
+        var target = null;
+        if (id === 'promptModal') {
+            target = document.getElementById('promptInput');
+        } else {
+            target = _getPrimaryFocusTarget(m);
+        }
+        if (target && target.focus) target.focus();
+    }, _MODAL_ANIM_DUR / 2);
 }
 function _closeModal(id) {
     var m = document.getElementById(id);
     if (!m) return;
     m.classList.remove('active');
-    _clearInert();
-    if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+    _modalOpenCount = Math.max(0, _modalOpenCount - 1);
+    if (_modalOpenCount === 0) {
+        document.body.classList.remove('modal-open');
+        _clearInert();
+    } else {
+        var modals = document.querySelectorAll('.modal-overlay.active');
+        if (modals.length) {
+            _setInertExcept(modals[modals.length - 1]);
+        } else {
+            _clearInert();
+        }
+    }
+    var stackItem = null;
+    for (var i = _focusStack.length - 1; i >= 0; i--) {
+        if (_focusStack[i].id === id) {
+            stackItem = _focusStack.splice(i, 1)[0];
+            break;
+        }
+    }
+    setTimeout(function() {
+        if (stackItem && stackItem.focus && stackItem.focus.focus) {
+            try { stackItem.focus.focus(); } catch(e) {}
+        }
+    }, _MODAL_ANIM_DUR / 2);
 }
 function closeModal(id) { _closeModal(id); }
 
 // 给除指定模态外的所有顶层交互元素加 inert（背景冻结）
 function _setInertExcept(activeModal) {
+    _clearInert();
     var siblings = document.body.children;
     for (var i = 0; i < siblings.length; i++) {
         var el = siblings[i];
@@ -419,61 +569,44 @@ function _setInertExcept(activeModal) {
 }
 function _clearInert() {
     var marked = document.querySelectorAll('[data-td-inert="1"]');
-    marked.forEach(function(el) {
-        el.removeAttribute('inert');
-        el.removeAttribute('data-td-inert');
-    });
+    for (var i = 0; i < marked.length; i++) {
+        marked[i].removeAttribute('inert');
+        marked[i].removeAttribute('data-td-inert');
+    }
 }
 
-// 兼容旧调用：点击 .modal-overlay 背景关闭（点击内容不关闭）
+// 点击 .modal-overlay 背景关闭（点击内容不关闭）
 document.addEventListener('click', function(e) {
     if (e.target.classList && e.target.classList.contains('modal-overlay')) {
-        // 确认/输入弹窗必须走专用回调：直接移除 active 会让 _confirmCallback 永远不被
-        // 调用且不重置为 null，未来若有回调在 if(!ok) 之前执行清理逻辑会导致清理被跳过。
-        // 这里与 Esc 键处理保持一致，背景点击等价于"取消"。
-        if (e.target.id === 'confirmModal') { if (typeof closeConfirm === 'function') closeConfirm(false); return; }
-        if (e.target.id === 'promptModal') { if (typeof closePrompt === 'function') closePrompt(false); return; }
-        e.target.classList.remove('active');
-        // 必须清理 inert 标记，否则弹窗视觉消失但 body 子元素仍带 inert，
-        // 整个页面无法交互/聚焦，必须刷新才恢复
-        _clearInert();
-        if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+        var id = e.target.id;
+        if (id === 'confirmModal') { closeConfirm(false); return; }
+        if (id === 'promptModal') { closePrompt(false); return; }
+        _closeModal(id);
     }
 });
 
 // Esc 关闭最顶层弹窗 + 焦点陷阱
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' || e.keyCode === 27) {
-        // 找最顶层 active 的 modal-overlay
         var modals = document.querySelectorAll('.modal-overlay.active');
         if (modals.length) {
             var top = modals[modals.length - 1];
-            // 确认弹窗走专用回调
-            if (top.id === 'confirmModal') { closeConfirm(false); }
-            else if (top.id === 'promptModal') { closePrompt(false); }
-            else {
-                top.classList.remove('active');
-                // 同步清理 inert，避免页面冻结（_closeModal 已清理，这里走兜底路径也要清理）
-                _clearInert();
-                if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
-            }
+            var topId = top.id;
+            if (topId === 'confirmModal') { closeConfirm(false); }
+            else if (topId === 'promptModal') { closePrompt(false); }
+            else { _closeModal(topId); }
             e.preventDefault();
         }
-        // 没有弹窗时，移动端关闭侧边栏
         else if (document.body.classList.contains('sidebar-open')) {
             document.body.classList.remove('sidebar-open');
         }
         return;
     }
-    // 焦点陷阱：Tab 在弹窗内循环
     if (e.key === 'Tab' || e.keyCode === 9) {
-        // 必须取最顶层 active 弹窗，与 Esc 处理保持一致。
-        // 原 querySelector 只返回 DOM 顺序中第一个（即最底层），当 confirm/prompt 弹窗
-        // 叠在业务弹窗之上时，Tab 焦点会被陷阱在底层弹窗中，用户无法用键盘操作顶层确认弹窗
         var modals = document.querySelectorAll('.modal-overlay.active');
         if (!modals.length) return;
         var active = modals[modals.length - 1];
-        var f = active.querySelectorAll('input:not([type=hidden]),select,textarea,button,a[href],[tabindex]:not([tabindex="-1"])');
+        var f = active.querySelectorAll('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])');
         if (!f.length) return;
         var first = f[0], last = f[f.length - 1];
         if (e.shiftKey && document.activeElement === first) {
@@ -661,6 +794,7 @@ window.tdCopy = function(text, successMsg) {
 window.TDPoll = (function(){
     var registry = []; // {fn, interval, timer}
     var _offline = !navigator.onLine;
+    var _offlineDur = _getCssDuration('--duration-slow', 300);
     function shouldSkip() {
         // 页面隐藏 或 网络离线 时跳过本次轮询
         return document.hidden || _offline;
@@ -688,7 +822,7 @@ window.TDPoll = (function(){
         var b = document.getElementById('offlineBanner');
         if (b) {
             if (offline) { b.removeAttribute('hidden'); b.classList.add('visible'); }
-            else { b.classList.remove('visible'); setTimeout(function(){ b.setAttribute('hidden',''); }, 300); }
+            else { b.classList.remove('visible'); setTimeout(function(){ b.setAttribute('hidden',''); }, _offlineDur); }
         }
     }
     window.addEventListener('online', function() {
@@ -785,28 +919,51 @@ if (document.getElementById('sidebarStatus') ||
 // 全页刷新场景下消除"白屏闪烁"，弱网移动端感知更顺畅。
 // 拦截同源 <a> 点击：启动进度条；DOMContentLoaded 推进到 100% 并淡出。
 (function(){
+    var _navDurBase = _getCssDuration('--duration-base', 200);
+    var _navDurSlow = _getCssDuration('--duration-slow', 300);
+    var _navReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var bar = document.createElement('div');
     bar.id = 'tdNavProgress';
-    bar.style.cssText = 'position:fixed;top:0;left:0;height:2px;width:0;background:var(--primary);z-index:10000;opacity:0;transition:width .25s ease, opacity .3s ease;pointer-events:none;border-radius:0 2px 2px 0;box-shadow:0 0 8px var(--primary)';
+    bar.style.cssText = 'position:fixed;top:0;left:0;height:2px;width:0;background:var(--primary);z-index:10000;opacity:0;transition:width ' + (_navDurSlow + 50) + 'ms ease, opacity ' + _navDurSlow + 'ms ease;pointer-events:none;border-radius:0 2px 2px 0;box-shadow:0 0 8px var(--primary)';
+    if (_navReducedMotion) {
+        bar.style.transition = 'none';
+    }
     // 移动端安全区域：进度条不遮挡 status bar
     bar.style.top = 'env(safe-area-inset-top, 0px)';
     document.documentElement.appendChild(bar);
-    var w = 0, timer = null, done = false;
+    var w = 0, rafId = null, done = false, lastTick = 0;
     function _set(p) { w = p; bar.style.width = p + '%'; bar.style.opacity = '1'; }
+    function _tick(ts) {
+        if (done) return;
+        if (!lastTick) lastTick = ts;
+        var delta = ts - lastTick;
+        if (delta >= 220) {
+            _set(Math.min(w + Math.random() * 12 + 3, 85));
+            lastTick = ts;
+        }
+        rafId = requestAnimationFrame(_tick);
+    }
     window._navStart = function() {
         done = false; _set(0);
-        if (timer) clearInterval(timer);
-        timer = setInterval(function() {
-            // 缓慢推进到 85%，模拟真实进度感
-            _set(Math.min(w + Math.random() * 12 + 3, 85));
-        }, 220);
+        if (_navReducedMotion) {
+            _set(85);
+            return;
+        }
+        if (rafId) cancelAnimationFrame(rafId);
+        lastTick = 0;
+        rafId = requestAnimationFrame(_tick);
     };
     window._navDone = function() {
         if (done) return; done = true;
-        if (timer) { clearInterval(timer); timer = null; }
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
         _set(100);
-        setTimeout(function(){ bar.style.opacity = '0'; }, 200);
-        setTimeout(function(){ bar.style.width = '0%'; }, 500);
+        if (_navReducedMotion) {
+            bar.style.opacity = '0';
+            setTimeout(function(){ bar.style.width = '0%'; }, 0);
+            return;
+        }
+        setTimeout(function(){ bar.style.opacity = '0'; }, _navDurBase);
+        setTimeout(function(){ bar.style.width = '0%'; }, _navDurSlow + _navDurBase);
     };
     // 同源导航链接点击触发
     document.addEventListener('click', function(e) {
@@ -1101,3 +1258,27 @@ document.addEventListener('keydown', function(e) {
         }
     }
 });
+
+// ─── 公共：密码强度指示器（统一 settings/setup/user-create 场景） ───
+window.renderPwStrength = function(pw, boxId) {
+    var box = document.getElementById(boxId);
+    if (!box) return;
+    if (!pw) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var hasL = /[A-Za-z]/.test(pw), hasD = /\d/.test(pw), hasS = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pw);
+    var level = 'weak';
+    if (pw.length >= 12 && hasL && hasD && hasS) level = 'strong';
+    else if (pw.length >= 8 && hasL && hasD) level = 'medium';
+    if (level !== 'weak' && level !== 'medium' && level !== 'strong') level = 'weak';
+    var tips = [];
+    if (pw.length < 8) tips.push('建议长度至少8位');
+    if (!hasL) tips.push('建议包含字母');
+    if (!hasD) tips.push('建议包含数字');
+    if (!hasS) tips.push('建议包含特殊字符');
+    if ({password123:1,12345678:1,qwerty123:1,admin123:1,11111111:1}[pw.toLowerCase()]) tips.push('该密码过于常见');
+    var labels = {weak:'弱', medium:'中', strong:'强'};
+    box.style.display = 'block';
+    var tipText = tips.length ? ' · ' + tips.join('；') : '';
+    if (level === 'strong' && !tips.length) tipText = ' ✓';
+    box.innerHTML = '<div class="pw-meter"><span class="pw-bar pw-bar-' + level + '"></span></div>' +
+        '<div class="pw-hint pw-hint-' + level + '">密码强度：' + labels[level] + tipText + '</div>';
+};

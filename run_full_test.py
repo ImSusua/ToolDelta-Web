@@ -66,6 +66,10 @@ with open(os.path.join(TD, "main.py"), "w", encoding="utf-8") as f:
     f.write("import sys, time\nprint('ToolDelta mock started')\nsys.stdout.flush()\n"
             "while True:\n    time.sleep(0.3)\n")
 
+# mock pyproject.toml：dependency_service 据此解析 ToolDelta 的 python 版本要求
+with open(os.path.join(TD, "pyproject.toml"), "w", encoding="utf-8") as f:
+    f.write('[project]\nname = "ToolDelta"\nversion = "1.0.0"\nrequires-python = ">=3.10"\n')
+
 # ---- 3. 创建应用与测试客户端 ----
 from app import create_app, socketio
 app = create_app()

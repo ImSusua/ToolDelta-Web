@@ -2,15 +2,19 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>首次初始化 - ToolDelta Web</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
-        body.auth-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; position: relative; }
+        body.auth-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; position: relative; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
         /* 主题选择按钮选中态（aria-pressed=true） */
         .theme-pick[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: rgba(94,106,210,0.12); }
         /* 测试连接结果文本 */
         #connTestResult { color: var(--ink-subtle); }
+        /* 移动端输入框字号16px防止iOS缩放 */
+        @media (max-width: 768px) {
+            .onb-panel .form-group input { font-size: 16px !important; }
+        }
     </style>
     <script>
       /* ── 主题初始化：与 base.html 统一使用 td_theme_v2 键 + data-theme 属性，支持 system ── */
@@ -138,10 +142,10 @@
             } else if (STEP === 2) {
                 panel.innerHTML = '<h2 id="onbTitle">管理员账号</h2>' +
                     '<p class="sub">设置用于登录管理面板的账号与密码（首次初始化必需，弱密码仅提示不阻止创建）。</p>' +
-                    '<div class="form-group"><label for="username">用户名</label><input type="text" id="username" name="username" autocomplete="username" enterkeyhint="next" placeholder="设置用户名（支持中文，1-32位）" aria-describedby="onbErr" value="' + esc(data.username) + '"></div>' +
-                    '<div class="form-group"><label for="password">密码</label><input type="password" id="password" name="new-password" autocomplete="new-password" enterkeyhint="next" placeholder="设置密码（1-64 位，建议8位以上）" aria-describedby="onbErr" oninput="renderPwStrength(this.value)"></div>' +
+                    '<div class="form-group"><label for="username">用户名<span class="req" style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label><input type="text" id="username" name="username" autocomplete="username" enterkeyhint="next" placeholder="设置用户名（支持中文，1-32位）" aria-describedby="onbErr" value="' + esc(data.username) + '" required aria-required="true"></div>' +
+                    '<div class="form-group"><label for="password">密码<span class="req" style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label><input type="password" id="password" name="new-password" autocomplete="new-password" enterkeyhint="next" placeholder="设置密码（1-64 位，建议8位以上）" aria-describedby="onbErr" oninput="renderPwStrength(this.value)" required aria-required="true"></div>' +
                     '<div id="pwStrengthBox" class="pw-strength-box" style="display:none"></div>' +
-                    '<div class="form-group"><label for="password2">确认密码</label><input type="password" id="password2" name="new-password-confirm" autocomplete="new-password" enterkeyhint="done" placeholder="再次输入密码" aria-describedby="onbErr"></div>';
+                    '<div class="form-group"><label for="password2">确认密码<span class="req" style="color:var(--danger,#e5484d);margin-left:2px" aria-hidden="true">*</span></label><input type="password" id="password2" name="new-password-confirm" autocomplete="new-password" enterkeyhint="done" placeholder="再次输入密码" aria-describedby="onbErr" required aria-required="true"></div>';
                 actions.innerHTML = '<button class="btn btn-outline" onclick="setStep(1)">← 上一步</button><button class="btn btn-primary" onclick="nextAdmin()">下一步 →</button>';
                 // 密码不写入 HTML 属性，改用 DOM API 回填
                 setTimeout(function () {
@@ -257,18 +261,16 @@
                 .then(function (r) { return r.json(); })
                 .then(function (d) {
                     if (d.success) {
-                        var ov = document.createElement('div');
-                        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px';
-                        ov.textContent = '正在进入面板...';
-                        document.body.appendChild(ov);
                         var warn = (d.data || {}).password_warning;
+                        var ov = document.createElement('div');
+                        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;flex-direction:column;gap:8px;text-align:center;padding:20px';
                         if (warn && warn.tips && warn.tips.length) {
-                            // 显示密码强度警告但继续进入面板
-                            showErr('密码强度提示: ' + warn.tips.join('；') + '（已创建账号，建议稍后修改密码）');
-                            setTimeout(function(){ window.location.href = '/'; }, 2500);
+                            ov.innerHTML = '<div>正在进入面板...</div><div style="font-size:13px;color:#ffd54f">密码强度提示: ' + esc(warn.tips.join('；')) + '<br>（已创建账号，建议稍后修改密码）</div>';
                         } else {
-                            window.location.href = '/';
+                            ov.textContent = '正在进入面板...';
                         }
+                        document.body.appendChild(ov);
+                        setTimeout(function(){ window.location.href = '/'; }, warn ? 3000 : 800);
                     }
                     else { if (btn) { btn.disabled = false; btn.textContent = '完成初始化'; } showErr(d.error || '初始化失败'); }
                 })

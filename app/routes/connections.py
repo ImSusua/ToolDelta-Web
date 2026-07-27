@@ -32,7 +32,7 @@ def _audit(action, detail):
     detail 中可能含 host/token 等用户输入,先 sanitize 防日志注入;
     token 字段绝不记录到审计日志(仅记 token=*** 表示是否设置)。
     """
-    user = session.get("username", "?")
+    user = log_service.sanitize_for_log(session.get("username", "?"))
     try:
         log_service.info(
             f"[{user}] {action}: {log_service.sanitize_for_log(detail)}",

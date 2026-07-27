@@ -342,9 +342,12 @@ class BackupService:
             return False, "恢复失败且回滚也失败,数据可能损坏,请检查文件系统"
         finally:
             if os.path.isdir(temp):
-                shutil.rmtree(temp)
+                shutil.rmtree(temp, ignore_errors=True)
             if os.path.isfile(snapshot_path):
-                os.remove(snapshot_path)
+                try:
+                    os.remove(snapshot_path)
+                except OSError:
+                    pass
 
     def reset_to_factory(self):
         """重置 ToolDelta 到出厂状态：主程序与用户数据一并重置。

@@ -334,6 +334,12 @@ def download_file():
         return fail("文件不存在")
     if not _is_real_path(full):
         return fail("符号链接目标不在允许范围内")
+    # 文件大小校验：防止下载超大文件导致内存/带宽耗尽
+    try:
+        if os.path.getsize(full) > 100 * 1024 * 1024:
+            return fail("文件超过 100MB，请使用其他方式下载")
+    except OSError:
+        return fail("无法读取文件信息")
     audit("下载文件", f"路径={raw}")
     return send_file(full, as_attachment=True, download_name=os.path.basename(full))
 
@@ -531,6 +537,34 @@ def search_files():
     except Exception as e:
         return _internal_error(e, "搜索文件")
 
+@bp.route("/count")
+def count_items():
+    unauthorized = _admin_required()
+    if unauthorized:
+        return unauthorized
+    raw = request.args.get("path", "")
+    full = safe_path(raw)
+    if not full or not os.path.exists(full):
+        return fail("路径不存在")
+    if not os.path.isdir(full):
+        return ok({"dirs": 0, "files": 0, "total": 0})
+    if not _is_real_path(full):
+        return fail("路径包含越权符号链接")
+    try:
+        dir_count = 0
+        file_count = 0
+        for entry in os.scandir(full):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    dir_count += 1
+                elif entry.is_file(follow_symlinks=False):
+                    file_count += 1
+            except OSError:
+                pass
+        return ok({"dirs": dir_count, "files": file_count, "total": dir_count + file_count})
+    except Exception as e:
+        return _internal_error(e, "统计目录")
+
 @bp.route("/batch-delete", methods=["POST"])
 def batch_delete():
     err = _admin_required()
@@ -541,6 +575,8 @@ def batch_delete():
         return fail("paths 必须为数组")
     if not paths:
         return fail("未选择文件")
+    if len(paths) > 500:
+        return fail("单次批量删除不能超过 500 项")
     deleted = []
     errors = []
     for raw in paths:
